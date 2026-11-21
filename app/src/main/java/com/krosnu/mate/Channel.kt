@@ -211,24 +211,7 @@ object ChannelRepository {
         return sortGroupedByChannel(list)
     }
 
-                    } else if (line.startsWith("http") && currentName != null) {
-                    list.add(
-                        Channel(
-                            id = "m3u-$countryTag-${list.size + 1}",
-                            country = countryTag,
-                            source = "M3U8",
-                            name = currentName,
-                            category = "Canlı",
-                            url = line
-                        )
-                    )
-                    currentName = null
-                }
-            }
-            list
-        } catch (_: Exception) {
-            emptyList()
-        }
+                    
     
     fun fetchM3UChannels(m3uUrl: String, countryTag: String): List<Channel> {
         return try {
