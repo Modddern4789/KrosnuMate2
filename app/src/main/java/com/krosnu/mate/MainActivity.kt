@@ -1,6 +1,7 @@
 package com.krosnu.mate
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -13,7 +14,6 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import android.app.AlertDialog
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.CoroutineScope
@@ -33,9 +33,7 @@ class MainActivity : Activity() {
         "AZ" to "AZ | AZƏRBAYCAN",
         "TR" to "TR | TÜRKİYƏ",
         "RU" to "RU | RUSİYA",
-        "MEDIABAY" to "MEDIABAY.TV",
-        "OPERATIV" to "OPERATIVMM.AZ",
-        "TVSTREAM" to "TVSTREAM.AZ",
+        "INT" to "DÜNYA / AVROPA",
         "M3U8" to "Canlı M3U8 (AZ/TR/RU)"
     )
 
@@ -130,10 +128,11 @@ class MainActivity : Activity() {
             val combined = az + tr + ru
             if (combined.isNotEmpty()) {
                 withContext(Dispatchers.Main) {
-                    val existing = ChannelRepository.getDefaultChannels()
+                    val merged = ChannelRepository.sortGroupedByChannel(
+                        combined + ChannelRepository.getDefaultChannels()
+                    )
                     allChannels.clear()
-                    allChannels.addAll(combined)
-                    allChannels.addAll(existing)
+                    allChannels.addAll(merged)
                     refreshList()
                     Toast.makeText(
                         this@MainActivity,
@@ -187,9 +186,7 @@ class MainActivity : Activity() {
         "AZ" -> allChannels.filter { it.country == "AZ" }
         "TR" -> allChannels.filter { it.country == "TR" }
         "RU" -> allChannels.filter { it.country == "RU" }
-        "MEDIABAY" -> allChannels.filter { it.source == "MEDIABAY" }
-        "OPERATIV" -> allChannels.filter { it.source == "OPERATIV" }
-        "TVSTREAM" -> allChannels.filter { it.source == "TVSTREAM" }
+        "INT" -> allChannels.filter { it.country == "INT" }
         "M3U8" -> allChannels.filter { it.source == "M3U8" }
         else -> allChannels
     }
@@ -244,7 +241,7 @@ class MainActivity : Activity() {
                         withContext(Dispatchers.Main) {
                             if (fetched != null) {
                                 allChannels.clear()
-                                allChannels.addAll(fetched)
+                                allChannels.addAll(ChannelRepository.sortGroupedByChannel(fetched))
                                 refreshList()
                                 Toast.makeText(this@MainActivity, "${fetched.size} kanal yeniləndi", Toast.LENGTH_SHORT).show()
                             } else {
