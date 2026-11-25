@@ -73,8 +73,10 @@ class PlayerActivity : Activity() {
         )
         hideSystemBars()
 
-        channelList = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
-        currentIndex = intent.getIntExtra("index", 0)
+        val raw = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
+        channelList = filterMembershipChannels(raw)
+        val rawIdx = intent.getIntExtra("index", 0)
+        currentIndex = if (channelList.isEmpty()) 0 else rawIdx.coerceIn(0, channelList.size - 1)
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -111,17 +113,17 @@ class PlayerActivity : Activity() {
                     view: WebView?,
                     request: WebResourceRequest?
                 ): Boolean {
-                    val u = request?.url?.toString()?.lowercase() ?: return true
-                    if (u.startsWith("intent:") || u.startsWith("market:") ||
-                        u.contains("doubleclick") || u.contains("googleads") || u.contains("popads")
-                    ) return true
-                    return false
+                    val u = request?.url?.toString() ?: return false
+                    return !(u.startsWith("http://") || u.startsWith("https://"))
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    loadingSpinner.visibility = View.GONE
                     val kw = channelList.getOrNull(currentIndex)?.matchKeyword ?: ""
-                    view?.evaluateJavascript(buildJs(kw), null)
+                    val js = buildJs(kw)
+                    view?.evaluateJavascript(js, null)
+                    handler.postDelayed({ view?.evaluateJavascript(js, null) }, 2500)
                 }
             }
 
@@ -131,13 +133,10 @@ class PlayerActivity : Activity() {
                     customViewCallback = callback
                     customVideoContainer.removeAllViews()
                     if (view != null) {
-                        view.isFocusable = false
                         customVideoContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
                         customVideoContainer.visibility = View.VISIBLE
                         customVideoContainer.bringToFront()
                     }
-                    if (overlayDrawer.visibility == View.VISIBLE) overlayDrawer.bringToFront()
-                    osdBar.bringToFront()
                 }
 
                 override fun onHideCustomView() {
@@ -157,9 +156,7 @@ class PlayerActivity : Activity() {
         }
         root.addView(customVideoContainer, FrameLayout.LayoutParams(-1, -1))
 
-        loadingSpinner = ProgressBar(this).apply {
-            visibility = View.GONE
-        }
+        loadingSpinner = ProgressBar(this).apply { visibility = View.GONE }
         root.addView(loadingSpinner, FrameLayout.LayoutParams(120, 120, Gravity.CENTER))
 
         overlayDrawer = LinearLayout(this).apply {
@@ -202,15 +199,13 @@ class PlayerActivity : Activity() {
             setBackgroundColor(Color.parseColor("#CC141B22"))
             setPadding(36, 22, 36, 22)
         }
-
         osdTitle = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 20f
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         }
-
         val btnList = Button(this).apply {
-            text = "☰ Kanallar (OK)"
+            text = "☰ Kanallar"
             isFocusable = false
             setOnClickListener { toggleOverlayDrawer(true) }
         }
@@ -229,105 +224,84 @@ class PlayerActivity : Activity() {
             isFocusable = false
             setOnClickListener { finish() }
         }
-
         osdBar.addView(osdTitle)
         osdBar.addView(btnList)
         osdBar.addView(btnPrev)
         osdBar.addView(btnNext)
         osdBar.addView(btnBack)
-
         root.addView(osdBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+
         setContentView(root)
         root.requestFocus()
         bindOverlayList()
+        if (channelList.isNotEmpty()) loadCurrentChannel()
+    }
 
-        if (channelList.isNotEmpty()) {
-            loadCurrentChannel()
-        }
+    private fun filterMembershipChannels(raw: List<Channel>): ArrayList<Channel> {
+        val blocked = listOf("canlitv.mobile", "canlitvizle", "canlitvmob", "blogcanli")
+        return ArrayList(raw.filter { ch ->
+            val text = "${ch.url} ${ch.source} ${ch.name}".lowercase()
+            blocked.none { text.contains(it) }
+        })
     }
 
     private fun buildJs(keyword: String): String {
-        val kw = keyword.replace("'", "\\'").lowercase()
+        val kw = keyword.replace("\\", "\\\\").replace("'", "\\'")
         return """
-            (function() {
-                if (window.__k) return; window.__k = 1;
-                var kw = '$kw';
-                var adSec = 0;
-                var fsClicked = false;
-
-                function tap(el) {
-                    if (!el) return;
-                    try { el.scrollIntoView({block:'center'}); } catch(e){}
-                    ['pointerdown','mousedown','mouseup','click'].forEach(function(m) {
-                        try { el.dispatchEvent(new MouseEvent(m, {bubbles:true, cancelable:true, view:window})); } catch(e){}
-                    });
-                    try { el.click(); } catch(e){}
-                }
-
-                function clickChannelKeyword() {
-                    if (!kw) return;
-                    var els = document.querySelectorAll('a, button, div, li, span, h3, h4, p');
-                    for (var i = 0; i < els.length; i++) {
-                        var t = (els[i].innerText || '').trim().toLowerCase();
-                        if (t === kw || (t.includes(kw) && t.length < 32)) {
-                            tap(els[i]);
-                            break;
+            (function(){
+                if(window.__krosnuInit) return;
+                window.__krosnuInit = true;
+                ['keydown','keypress','keyup'].forEach(function(ev){
+                    window.addEventListener(ev,function(e){e.stopImmediatePropagation();},true);
+                });
+                var kw = '$kw'.toLowerCase().trim();
+                var tries = 0;
+                var timer = setInterval(function(){
+                    tries++;
+                    if(tries > 60){ clearInterval(timer); return; }
+                    if(kw && !window.__krosnuChDone){
+                        var items = document.querySelectorAll('a,button,li,div,span');
+                        for(var i=0;i<items.length;i++){
+                            var el = items[i];
+                            var t = ((el.innerText||'')+' '+(el.getAttribute('title')||'')).toLowerCase();
+                            if(t.indexOf(kw)!==-1 && t.length < 40){
+                                window.__krosnuChDone = true;
+                                el.click();
+                                break;
+                            }
                         }
                     }
-                }
-                setTimeout(clickChannelKeyword, 500);
-                setTimeout(clickChannelKeyword, 2000);
-
-                setInterval(function() {
-                    // 1. Başlat / İzle / Play butonlarına otomatik bas
-                    document.querySelectorAll('.vjs-big-play-button, .jw-icon-playback, [aria-label*="Play" i], [aria-label*="İzle" i], [class*="play-btn"]').forEach(function(p) {
-                        if (p.offsetParent !== null) tap(p);
-                    });
-                    document.querySelectorAll('button, a').forEach(function(b) {
-                        var bt = (b.innerText || '').trim().toLowerCase();
-                        if ((bt === 'izle' || bt === '▶ izle' || bt === 'başlat' || bt === 'oynat' || bt === 'play') && b.offsetParent !== null) {
-                            tap(b);
+                    var btns = document.querySelectorAll('button,a,div,span');
+                    for(var j=0;j<btns.length;j++){
+                        var b = btns[j];
+                        var bt = ((b.innerText||'')+' '+(b.className||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||'')).toLowerCase();
+                        if(bt.indexOf('skip')!==-1 || bt.indexOf('reklamı geç')!==-1 || bt.indexOf('reklami gec')!==-1 || bt.indexOf('atla')!==-1){
+                            if(b.offsetParent !== null) b.click();
                         }
-                    });
-
-                    // 2. 15 sn reklamdan sonra Skip / Reklamı Geç butonuna bas
-                    var skipBtn = null;
-                    document.querySelectorAll('button, a, div, span').forEach(function(el) {
-                        var z = ((el.innerText || '') + ' ' + (el.className || '')).toLowerCase();
-                        if ((z.includes('skip') || z.includes('reklamı geç') || z.includes('reklami gec') || z.includes('reklamı atla')) && el.offsetParent !== null && z.length < 50) {
-                            skipBtn = el;
+                        if(!window.__krosnuPlayDone && (bt==='izle' || bt==='başlat' || bt==='baslat' || bt.indexOf('vjs-big-play')!==-1 || bt.indexOf('plyr__control--overlaid')!==-1)){
+                            window.__krosnuPlayDone = true;
+                            b.click();
                         }
-                    });
-                    if (skipBtn) {
-                        adSec++;
-                        if (adSec >= 15 || (skipBtn.innerText || '').toLowerCase().includes('skip') || (skipBtn.innerText || '').toLowerCase().includes('geç')) {
-                            tap(skipBtn);
-                            adSec = 0;
+                        if(!window.__krosnuFsDone && (bt.indexOf('fullscreen')!==-1 || bt.indexOf('tam ekran')!==-1 || bt.indexOf('vjs-fullscreen')!==-1)){
+                            window.__krosnuFsDone = true;
+                            b.click();
                         }
                     }
-
-                    // 3. Sayfadaki [ ] Tam Ekran butonuna bas ve videoyu 100vw x 100vh yap
-                    if (!fsClicked) {
-                        var fsBtn = document.querySelector('.vjs-fullscreen-control, .jw-icon-fullscreen, [aria-label*="Fullscreen" i], [title*="Tam Ekran" i], [class*="fullscreen"]');
-                        if (fsBtn && fsBtn.offsetParent !== null) {
-                            tap(fsBtn);
-                            fsClicked = true;
+                    var vids = document.querySelectorAll('video');
+                    for(var v=0;v<vids.length;v++){
+                        var vid = vids[v];
+                        vid.muted = false;
+                        if(vid.paused) vid.play().catch(function(){});
+                        vid.style.cssText = 'position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:999999!important;background:#000!important;object-fit:contain!important;';
+                    }
+                    var frms = document.querySelectorAll('iframe');
+                    for(var f=0;f<frms.length;f++){
+                        var fr = frms[f];
+                        if(fr.offsetWidth > 180 && fr.offsetHeight > 120){
+                            fr.style.cssText = 'position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:999998!important;border:0!important;';
                         }
                     }
-                    var v = document.querySelector('video');
-                    var f = document.querySelector('iframe[src*="m3u8"], iframe[src*="embed"], iframe[src*="player"], iframe');
-                    var target = v || f;
-                    if (target) {
-                        target.style.setProperty('position', 'fixed', 'important');
-                        target.style.setProperty('top', '0', 'important');
-                        target.style.setProperty('left', '0', 'important');
-                        target.style.setProperty('width', '100vw', 'important');
-                        target.style.setProperty('height', '100vh', 'important');
-                        target.style.setProperty('z-index', '999999', 'important');
-                        target.style.setProperty('background', '#000', 'important');
-                        if (v && v.paused) { v.play().catch(function(){}); }
-                    }
-                }, 1000);
+                }, 800);
             })();
         """.trimIndent()
     }
@@ -372,7 +346,6 @@ class PlayerActivity : Activity() {
                 tv.background = createRowBg(position == currentIndex)
                 tv.setOnClickListener {
                     currentIndex = position
-                    retryCount = 0
                     toggleOverlayDrawer(false)
                     loadCurrentChannel()
                 }
@@ -413,7 +386,6 @@ class PlayerActivity : Activity() {
 
     private fun switchChannel(delta: Int) {
         if (channelList.isEmpty()) return
-        retryCount = 0
         currentIndex = (currentIndex + delta + channelList.size) % channelList.size
         loadCurrentChannel()
     }
@@ -431,7 +403,6 @@ class PlayerActivity : Activity() {
             val num = digitBuffer.toIntOrNull() ?: 0
             digitBuffer = ""
             if (num in 1..channelList.size) {
-                retryCount = 0
                 currentIndex = num - 1
                 loadCurrentChannel()
             } else {
@@ -440,39 +411,116 @@ class PlayerActivity : Activity() {
         }, "digit", SystemClock.uptimeMillis() + 1200)
     }
 
-    @OptIn(UnstableApi::class)
-    private fun initializePlayer() {
-        if (player != null) return
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15000, 60000, 1500, 3000)
-            .build()
-        player = ExoPlayer.Builder(this)
-            .setLoadControl(loadControl)
-            .build()
-            .apply {
-                playWhenReady = true
-                addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        loadingSpinner.visibility =
-                            if (playbackState == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
-                    }
+    private fun loadCurrentChannel() {
+        val ch = channelList[currentIndex]
+        retryCount = 0
+        osdTitle.text = String.format("%03d  %s | %s", currentIndex + 1, ch.country, ch.name)
+        showOsd()
+        loadingSpinner.visibility = View.VISIBLE
 
-                    override fun onPlayerError(error: PlaybackException) {
-                        loadingSpinner.visibility = View.GONE
-                        if (retryCount < 2) {
-                            retryCount++
-                            handler.postDelayed({ loadCurrentChannel() }, 1500)
-                        } else {
-                            Toast.makeText(this@PlayerActivity, "Yayın açılamadı", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                })
-            }
-        playerView.player = player
+        val isDirect = ch.url.contains(".m3u8", true) ||
+            ch.url.contains(".mpd", true) ||
+            ch.source == "M3U8"
+
+        if (isDirect) {
+            webPlayer.stopLoading()
+            webPlayer.loadUrl("about:blank")
+            webPlayer.visibility = View.GONE
+            customVideoContainer.visibility = View.GONE
+            playerView.visibility = View.VISIBLE
+            playStream(ch.url, ch.url)
+        } else {
+            player?.stop()
+            playerView.visibility = View.GONE
+            customVideoContainer.visibility = View.GONE
+            webPlayer.visibility = View.VISIBLE
+            webPlayer.loadUrl(ch.url)
+        }
     }
 
     @OptIn(UnstableApi::class)
-    private fun loadCurrentChannel() {
-        if (channelList.isEmpty()) return
-        currentIndex = currentIndex.coerceIn(0, channelList.size - 1)
-        val ch = channelList[currentI
+    private fun playStream(streamUrl: String, referer: String) {
+        player?.release()
+        val headers = mapOf(
+            "Referer" to referer,
+            "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
+        )
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15000, 60000, 2500, 5000)
+            .build()
+
+        val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
+        player = exo
+        playerView.player = exo
+
+        exo.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) {
+                    loadingSpinner.visibility = View.GONE
+                    retryCount = 0
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (retryCount < 3) {
+                    retryCount++
+                    handler.postDelayed({ playStream(streamUrl, referer) }, 1500)
+                } else {
+                    loadingSpinner.visibility = View.GONE
+                    Toast.makeText(this@PlayerActivity, "Yayın açılamadı", Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
+
+        val mediaItem = MediaItem.fromUri(streamUrl)
+        val hlsSource = HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        exo.setMediaSource(hlsSource)
+        exo.prepare()
+        exo.playWhenReady = true
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val code = event.keyCode
+        if (overlayDrawer.visibility == View.VISIBLE) {
+            if (event.action == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_BACK) {
+                toggleOverlayDrawer(false)
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
+
+        val isRemoteKey = code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 ||
+            code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_CHANNEL_UP ||
+            code == KeyEvent.KEYCODE_DPAD_DOWN || code == KeyEvent.KEYCODE_CHANNEL_DOWN ||
+            code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER ||
+            code == KeyEvent.KEYCODE_INFO || code == KeyEvent.KEYCODE_BACK
+
+        if (!isRemoteKey) return super.dispatchKeyEvent(event)
+        if (event.action != KeyEvent.ACTION_DOWN) return true
+
+        if (code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+            handleRemoteDigit(code - KeyEvent.KEYCODE_0)
+            return true
+        }
+        return when (code) {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> { switchChannel(-1); true }
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> { switchChannel(1); true }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { toggleOverlayDrawer(true); true }
+            KeyEvent.KEYCODE_INFO -> { showOsd(); true }
+            KeyEvent.KEYCODE_BACK -> { finish(); true }
+            else -> true
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
+        webPlayer.destroy()
+        player?.release()
+        player = null
+    }
+}
