@@ -312,109 +312,27 @@ class PlayerActivity : Activity() {
         }, "digit", android.os.SystemClock.uptimeMillis() + 1200)
     }
 
-    private fun loadCurrentChannel() {
-        val ch = channelList[currentIndex]
-        osdTitle.text = String.format("%03d  %s | %s", currentIndex + 1, ch.country, ch.name)
-        showOsd()
-
-            @OptIn(UnstableApi::class)
-    private fun playStream(streamUrl: String, referer: String) {
-        val headers = mapOf(
-            "Referer" to referer,
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
-        )
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setDefaultRequestProperties(headers)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(15000)
-
-        val exo = player ?: run {
-            val loadControl = DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15000, 60000, 1500, 3000)
-                .build()
-            ExoPlayer.Builder(this)
-                .setLoadControl(loadControl)
-                .build()
-                .also { created ->
-                    player = created
-                    playerView.player = created
-                    created.addListener(object : Player.Listener {
-                        override fun onPlaybackStateChanged(state: Int) {
-                            if (state == Player.STATE_READY) {
-                                retryCount = 0
-                                loadingSpinner.visibility = View.GONE
-                            } else if (state == Player.STATE_BUFFERING) {
-                                loadingSpinner.visibility = View.VISIBLE
-                            } else if (state == Player.STATE_ENDED) {
-                                loadCurrentChannel()
-                            }
-                        }
-
-                        override fun onPlayerError(error: PlaybackException) {
-                            if (retryCount < 3) {
-                                retryCount++
-                                handler.postDelayed({ loadCurrentChannel() }, 1500)
-                            } else {
-                                loadingSpinner.visibility = View.GONE
-                                Toast.makeText(this@PlayerActivity, "Yayın koptu — ▲/▼ ile yedek kaynağa geçin", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    })
-                }
         }
 
-        val mediaItem = MediaItem.fromUri(streamUrl)
-        val hlsSource = HlsMediaSource.Factory(dataSourceFactory)
-            .setAllowChunklessPreparation(true)
-            .createMediaSource(mediaItem)
-        exo.setMediaSource(hlsSource)
-        exo.prepare()
-        exo.playWhenReady = true
+    private fun releasePlayer() {
+        player?.release()
+        player = null
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            if (overlayDrawer.visibility == View.VISIBLE) {
-                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                    toggleOverlayDrawer(false)
-                    return true
-                }
-                return super.dispatchKeyEvent(event)
-            }
-
-            if (event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-                handleRemoteDigit(event.keyCode - KeyEvent.KEYCODE_0)
-                return true
-            }
-
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
-                    switchChannel(-1); return true
-                }
-                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
-                    switchChannel(1); return true
-                }
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    toggleOverlayDrawer(true); return true
-                }
-                KeyEvent.KEYCODE_INFO -> {
-                    showOsd(); return true
-                }
-                KeyEvent.KEYCODE_BACK -> {
-                    finish(); return true
-                }
-            }
+    override fun onStart() {
+        super.onStart()
+        if (player == null) {
+            initializePlayer()
         }
-        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        releasePlayer()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        handler.removeCallbacksAndMessages(null)
-        webPlayer.destroy()
-        player?.release()
-        player = null
+        releasePlayer()
     }
-    }
-    
+}
