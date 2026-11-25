@@ -18,8 +18,14 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : Activity() {
 
@@ -27,6 +33,7 @@ class MainActivity : Activity() {
     private var activeGroup = "AZ"
     private lateinit var channelRecycler: RecyclerView
     private lateinit var groupContainer: LinearLayout
+    private lateinit var statusBanner: TextView
 
     private val groups = listOf(
         "ALL" to "Bütün kanallar",
@@ -34,7 +41,7 @@ class MainActivity : Activity() {
         "TR" to "TR | TÜRKİYƏ",
         "RU" to "RU | RUSİYA",
         "INT" to "DÜNYA / AVROPA",
-        "M3U8" to "Canlı M3U8 (AZ/TR/RU)"
+        "M3U8" to "Canlı M3U8 (Çalışanlar)"
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,7 +62,13 @@ class MainActivity : Activity() {
                 text = "krosnumate"
                 textSize = 20f
                 setTextColor(Color.parseColor("#38BDF8"))
-                setPadding(12, 0, 12, 28)
+                setPadding(12, 0, 12, 20)
+            }
+            statusBanner = TextView(this).apply {
+                text = "Hazır"
+                textSize = 12f
+                setTextColor(Color.parseColor("#94A3B8"))
+                setPadding(12, 0, 12, 20)
             }
             val btnTv = Button(this).apply {
                 text = "TV Kanalları"
@@ -66,12 +79,12 @@ class MainActivity : Activity() {
                 setOnClickListener { activeGroup = "AZ"; renderGroups(); refreshList() }
             }
             val btnRefreshM3u = Button(this).apply {
-                text = "AZ / TR / RU Yenilə"
+                text = "Çalışanları Tara"
                 isFocusable = true
                 isFocusableInTouchMode = true
                 background = createTvFocusDrawable(Color.parseColor("#1F2933"), Color.parseColor("#38BDF8"))
                 setTextColor(Color.parseColor("#34D399"))
-                setOnClickListener { loadLiveM3uPlaylists() }
+                setOnClickListener { loadAndVerifyLivePlaylists() }
             }
             val btnSync = Button(this).apply {
                 text = "Xüsusi JSON Linki"
@@ -82,6 +95,7 @@ class MainActivity : Activity() {
                 setOnClickListener { openRemoteSyncDialog() }
             }
             navRail.addView(logo)
+            navRail.addView(statusBanner)
             navRail.addView(btnTv)
             navRail.addView(btnRefreshM3u)
             navRail.addView(btnSync)
@@ -107,7 +121,7 @@ class MainActivity : Activity() {
 
             renderGroups()
             refreshList()
-            loadLiveM3uPlaylists()
+            loadAndVerifyLivePlaylists()
             channelRecycler.requestFocus()
         } catch (e: Throwable) {
             val errTv = TextView(this).apply {
@@ -120,26 +134,59 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun loadLiveM3uPlaylists() {
+    private fun isStreamReachable(urlStr: String): Boolean {
+        return try {
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 2800
+                readTimeout = 2800
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13)")
+            }
+            val code = conn.responseCode
+            val content = if (code in 200..299) {
+                conn.inputStream.bufferedReader().use { it.readText().take(250) }
+            } else ""
+            conn.disconnect()
+            code in 200..299 && (content.contains("#EXTM3U") || content.isNotBlank())
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun loadAndVerifyLivePlaylists() {
+        statusBanner.text = "Canlı kanallar taranıyor..."
         CoroutineScope(Dispatchers.IO).launch {
             val az = ChannelRepository.fetchM3UChannels(ChannelRepository.M3U_AZ, "AZ")
             val tr = ChannelRepository.fetchM3UChannels(ChannelRepository.M3U_TR, "TR")
             val ru = ChannelRepository.fetchM3UChannels(ChannelRepository.M3U_RU, "RU")
-            val combined = az + tr + ru
-            if (combined.isNotEmpty()) {
-                withContext(Dispatchers.Main) {
-                    val merged = ChannelRepository.sortGroupedByChannel(
-                        combined + ChannelRepository.getDefaultChannels()
-                    )
-                    allChannels.clear()
-                    allChannels.addAll(merged)
-                    refreshList()
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Canlı M3U8: AZ(${az.size}) TR(${tr.size}) RU(${ru.size})",
-                        Toast.LENGTH_SHORT
-                    ).show()
+
+            val candidates = (az + tr + ru).filter {
+                !it.name.contains("Geo-blocked", ignoreCase = true)
+            }
+
+            val sem = Semaphore(12)
+            val workingM3u = candidates.map { ch ->
+                async {
+                    sem.withPermit {
+                        if (isStreamReachable(ch.url)) ch else null
+                    }
                 }
+            }.awaitAll().filterNotNull()
+
+            withContext(Dispatchers.Main) {
+                val merged = ChannelRepository.sortGroupedByChannel(
+                    workingM3u + ChannelRepository.getDefaultChannels()
+                )
+                allChannels.clear()
+                allChannels.addAll(merged)
+                refreshList()
+                statusBanner.text = "Açık M3U8: ${workingM3u.size} kanal"
+                Toast.makeText(
+                    this@MainActivity,
+                    "Sadece çalışanlar eklendi: ${workingM3u.size} M3U8 + yedekler",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
