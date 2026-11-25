@@ -238,34 +238,33 @@ class PlayerActivity : Activity() {
     }
 
     private fun buildJs(): String {
-        val lockKeys = "['keydown','keypress','keyup'].forEach(function(e){window.addEventListener(e,function(x){if(x.isTrusted){x.stopImmediatePropagation();x.preventDefault();}},true);});"
-        val getDocs = "function dAll(r,o){o=o||[];if(!r)return o;o.push(r);r.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)dAll(f.contentDocument,o);}catch(e){}});return o;}"
-        val clickFn = "function tap(el){if(!el)return;try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}" +
-            "['pointerdown','mousedown','mouseup','click'].forEach(function(k){try{el.dispatchEvent(new MouseEvent(k,{bubbles:true,cancelable:true,view:window}));}catch(e){}});try{el.click();}catch(e){}}"
-        val fsFn = "function fsNow(ds){for(var i=0;i<ds.length;i++){var d=ds[i];if(d.fullscreenElement||d.webkitFullscreenElement){fs=true;return true;}" +
-            "var b=d.querySelector('[class*=\"fullscreen\"],.vjs-fullscreen-control,.jw-icon-fullscreen');" +
+        val k = "['keydown','keypress','keyup'].forEach(function(e){window.addEventListener(e,function(x){if(x.isTrusted){x.stopImmediatePropagation();x.preventDefault();}},true);});"
+        val d = "function dAll(r,o){o=o||[];if(!r)return o;o.push(r);r.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)dAll(f.contentDocument,o);}catch(e){}});return o;}"
+        val c = "function tap(el){if(!el)return;try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}" +
+            "['pointerdown','mousedown','mouseup','click'].forEach(function(m){try{el.dispatchEvent(new MouseEvent(m,{bubbles:true,cancelable:true,view:window}));}catch(e){}});try{el.click();}catch(e){}}"
+        val f = "function fsNow(ds){for(var i=0;i<ds.length;i++){var x=ds[i];if(x.fullscreenElement||x.webkitFullscreenElement){fs=true;return true;}" +
+            "var b=x.querySelector('[class*=\"fullscreen\"],.vjs-fullscreen-control,.jw-icon-fullscreen');" +
             "if(b&&b.offsetParent!==null){tap(b);fs=true;return true;}" +
-            "var v=d.querySelector('video');if(v){var r=v.requestFullscreen||v.webkitRequestFullscreen;if(r){try{r.call(v);fs=true;return true;}catch(e){}}}}return false;}"
-        val loopFn = "var t=0;var fs=false;setInterval(function(){var ds=dAll(document);" +
-            "ds.forEach(function(d){d.querySelectorAll('a,button,div,span,form,input').forEach(function(el){" +
+            "var v=x.querySelector('video');if(v){var r=v.requestFullscreen||v.webkitRequestFullscreen;if(r){try{r.call(v);fs=true;return true;}catch(e){}}}}return false;}"
+        val l = "var t=0;var fs=false;setInterval(function(){var ds=dAll(document);" +
+            "ds.forEach(function(x){x.querySelectorAll('a,button,div,span,form,input').forEach(function(el){" +
             "var s=(el.innerText||el.textContent||'').trim().toLowerCase();" +
             "if((['giriş','giriş yap','üye ol','üyelik','login','sign in','register'].indexOf(s)>=0&&el.offsetWidth<320&&el.offsetHeight<120)||(el.type==='password'&&el.closest('form,div,section'))){" +
             "(el.closest('form,div,section')||el).style.setProperty('display','none','important');}});" +
-            "var p=d.querySelector('.vjs-big-play-button,.jw-icon-playback,[class*=\"play\"]');if(p&&p.offsetParent!==null)tap(p);" +
-            "d.querySelectorAll('video').forEach(function(v){if(v.paused){try{var pr=v.play();if(pr&&pr.catch)pr.catch(function(){});}catch(e){}}});});" +
-            "var sk=null;var ad=null;for(var i=0;i<ds.length;i++){var d=ds[i];" +
-            "var c=Array.from(d.querySelectorAll('button,a,div,span')).find(function(el){" +
-            "var x=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();" +
-            "return(x.indexOf('skip')>=0||x.indexOf('geç')>=0||x.indexOf('atla')>=0)&&el.offsetParent!==null;});" +
-            "if(c){sk=c;break;}" +
-            "var v=Array.from(d.querySelectorAll('video')).find(function(x){return !x.paused&&x.duration>0&&x.duration<=35;});" +
+            "var p=x.querySelector('.vjs-big-play-button,.jw-icon-playback,[class*=\"play\"]');if(p&&p.offsetParent!==null)tap(p);" +
+            "x.querySelectorAll('video').forEach(function(v){if(v.paused){try{var pr=v.play();if(pr&&pr.catch)pr.catch(function(){});}catch(e){}}});});" +
+            "var sk=null;var ad=null;for(var i=0;i<ds.length;i++){var x=ds[i];" +
+            "var q=Array.from(x.querySelectorAll('button,a,div,span')).find(function(el){" +
+            "var z=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();" +
+            "return(z.indexOf('skip')>=0||z.indexOf('geç')>=0||z.indexOf('atla')>=0)&&el.offsetParent!==null;});" +
+            "if(q){sk=q;break;}" +
+            "var v=Array.from(x.querySelectorAll('video')).find(function(y){return !y.paused&&y.duration>0&&y.duration<=35;});" +
             "if(v&&!ad)ad=v;}" +
             "if(sk||ad){t++;if(t>=15){if(sk)tap(sk);if(ad&&isFinite(ad.duration)){try{ad.currentTime=Math.max(ad.currentTime,ad.duration-0.2);}catch(e){}}" +
             "t=0;fs=false;setTimeout(function(){fsNow(dAll(document));},500);}}else{t=0;if(!fs)fsNow(ds);}},1000);"
-        return "(function(){if(window.__k)return;window.__k=1;" + lockKeys + getDocs + clickFn + fsFn + loopFn + "})();"
+        return "(function(){if(window.__k)return;window.__k=1;" + k + d + c + f + l + "})();"
     }
-
-    private fun filterMembershipChannels(list: List<Channel>): ArrayList<Channel> {
+        private fun filterMembershipChannels(list: List<Channel>): ArrayList<Channel> {
         val blocked = listOf(
             "login", "signin", "sign-in", "register", "subscribe", "vip", "member",
             "giris", "giriş", "uye", "üye", "abone"
@@ -465,4 +464,69 @@ class PlayerActivity : Activity() {
             handleRemoteDigit(keyCode - KeyEvent.KEYCODE_0)
             return true
         }
-        when (ke
+        when (keyCode) {
+            KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_DPAD_UP -> {
+                if (overlayDrawer.visibility != View.VISIBLE) {
+                    switchChannel(1)
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (overlayDrawer.visibility != View.VISIBLE) {
+                    switchChannel(-1)
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                if (overlayDrawer.visibility == View.VISIBLE) {
+                    val focusedView = overlayRecycler.focusedChild
+                    if (focusedView != null) {
+                        focusedView.performClick()
+                    } else {
+                        val holder = overlayRecycler.findViewHolderForAdapterPosition(currentIndex)
+                        holder?.itemView?.performClick()
+                    }
+                    return true
+                } else {
+                    toggleOverlayDrawer(true)
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_MENU -> {
+                toggleOverlayDrawer(overlayDrawer.visibility != View.VISIBLE)
+                return true
+            }
+            KeyEvent.KEYCODE_BACK -> {
+                if (overlayDrawer.visibility == View.VISIBLE) {
+                    toggleOverlayDrawer(false)
+                    return true
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun releasePlayer() {
+        player?.release()
+        player = null
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (player == null) {
+            initializePlayer()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        releasePlayer()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        releasePlayer()
+        handler.removeCallbacksAndMessages(null)
+        webPlayer.destroy()
+    }
+}
