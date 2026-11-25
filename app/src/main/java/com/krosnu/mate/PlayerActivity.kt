@@ -111,11 +111,18 @@ class PlayerActivity : Activity() {
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
                     request: WebResourceRequest?
-                ): Boolean = false
+                ): Boolean {
+                    val u = request?.url?.toString()?.lowercase() ?: return true
+                    if (u.startsWith("intent:") || u.startsWith("market:") ||
+                        u.contains("doubleclick") || u.contains("googleads") || u.contains("popads")
+                    ) return true
+                    return false
+                }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    view?.evaluateJavascript(buildJs(), null)
+                    val kw = channelList.getOrNull(currentIndex)?.matchKeyword ?: ""
+                    view?.evaluateJavascript(buildJs(kw), null)
                 }
             }
 
@@ -125,10 +132,13 @@ class PlayerActivity : Activity() {
                     customViewCallback = callback
                     customVideoContainer.removeAllViews()
                     if (view != null) {
+                        view.isFocusable = false
                         customVideoContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
                         customVideoContainer.visibility = View.VISIBLE
                         customVideoContainer.bringToFront()
                     }
+                    if (overlayDrawer.visibility == View.VISIBLE) overlayDrawer.bringToFront()
+                    osdBar.bringToFront()
                 }
 
                 override fun onHideCustomView() {
@@ -237,34 +247,88 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun buildJs(): String {
-        val k = "['keydown','keypress','keyup'].forEach(function(e){window.addEventListener(e,function(x){if(x.isTrusted){x.stopImmediatePropagation();x.preventDefault();}},true);});"
-        val d = "function dAll(r,o){o=o||[];if(!r)return o;o.push(r);r.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)dAll(f.contentDocument,o);}catch(e){}});return o;}"
-        val c = "function tap(el){if(!el)return;try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}" +
-            "['pointerdown','mousedown','mouseup','click'].forEach(function(m){try{el.dispatchEvent(new MouseEvent(m,{bubbles:true,cancelable:true,view:window}));}catch(e){}});try{el.click();}catch(e){}}"
-        val f = "function fsNow(ds){for(var i=0;i<ds.length;i++){var x=ds[i];if(x.fullscreenElement||x.webkitFullscreenElement){fs=true;return true;}" +
-            "var b=x.querySelector('[class*=\"fullscreen\"],.vjs-fullscreen-control,.jw-icon-fullscreen');" +
-            "if(b&&b.offsetParent!==null){tap(b);fs=true;return true;}" +
-            "var v=x.querySelector('video');if(v){var r=v.requestFullscreen||v.webkitRequestFullscreen;if(r){try{r.call(v);fs=true;return true;}catch(e){}}}}return false;}"
-        val l = "var t=0;var fs=false;setInterval(function(){var ds=dAll(document);" +
-            "ds.forEach(function(x){x.querySelectorAll('a,button,div,span,form,input').forEach(function(el){" +
-            "var s=(el.innerText||el.textContent||'').trim().toLowerCase();" +
-            "if((['giriş','giriş yap','üye ol','üyelik','login','sign in','register'].indexOf(s)>=0&&el.offsetWidth<320&&el.offsetHeight<120)||(el.type==='password'&&el.closest('form,div,section'))){" +
-            "(el.closest('form,div,section')||el).style.setProperty('display','none','important');}});" +
-            "var p=x.querySelector('.vjs-big-play-button,.jw-icon-playback,[class*=\"play\"]');if(p&&p.offsetParent!==null)tap(p);" +
-            "x.querySelectorAll('video').forEach(function(v){if(v.paused){try{var pr=v.play();if(pr&&pr.catch)pr.catch(function(){});}catch(e){}}});});" +
-            "var sk=null;var ad=null;for(var i=0;i<ds.length;i++){var x=ds[i];" +
-            "var q=Array.from(x.querySelectorAll('button,a,div,span')).find(function(el){" +
-            "var z=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();" +
-            "return(z.indexOf('skip')>=0||z.indexOf('geç')>=0||z.indexOf('atla')>=0)&&el.offsetParent!==null;});" +
-            "if(q){sk=q;break;}" +
-            "var v=Array.from(x.querySelectorAll('video')).find(function(y){return !y.paused&&y.duration>0&&y.duration<=35;});" +
-            "if(v&&!ad)ad=v;}" +
-            "if(sk||ad){t++;if(t>=15){if(sk)tap(sk);if(ad&&isFinite(ad.duration)){try{ad.currentTime=Math.max(ad.currentTime,ad.duration-0.2);}catch(e){}}" +
-            "t=0;fs=false;setTimeout(function(){fsNow(dAll(document));},500);}}else{t=0;if(!fs)fsNow(ds);}},1000);"
-        return "(function(){if(window.__k)return;window.__k=1;" + k + d + c + f + l + "})();"
+    private fun buildJs(keyword: String): String {
+        val kw = keyword.replace("'", "\\'").lowercase()
+        return """
+            (function() {
+                if (window.__k) return; window.__k = 1;
+                var kw = '$kw';
+                var adSec = 0;
+
+                function tap(el) {
+                    if (!el) return;
+                    try { el.scrollIntoView({block:'center'}); } catch(e){}
+                    ['pointerdown','mousedown','mouseup','click'].forEach(function(m) {
+                        try { el.dispatchEvent(new MouseEvent(m, {bubbles:true, cancelable:true, view:window})); } catch(e){}
+                    });
+                    try { el.click(); } catch(e){}
+                }
+
+                function clickChannelKeyword() {
+                    if (!kw) return;
+                    var els = document.querySelectorAll('a, button, div, li, span, h3, h4, p');
+                    for (var i = 0; i < els.length; i++) {
+                        var t = (els[i].innerText || '').trim().toLowerCase();
+                        if (t === kw || (t.includes(kw) && t.length < 32)) {
+                            tap(els[i]);
+                            break;
+                        }
+                    }
+                }
+                setTimeout(clickChannelKeyword, 400);
+                setTimeout(clickChannelKeyword, 1800);
+
+                setInterval(function() {
+                    document.querySelectorAll('[class*="login"], [class*="modal"], [class*="popup"], [id*="login"]').forEach(function(el) {
+                        var s = (el.innerText || '').toLowerCase();
+                        if (s.includes('üyelik') || s.includes('üye ol') || s.includes('giriş')) {
+                            el.style.setProperty('display', 'none', 'important');
+                        }
+                    });
+
+                    var playBtns = document.querySelectorAll('.vjs-big-play-button, .jw-icon-playback, [aria-label*="Play" i], [aria-label*="İzle" i], [class*="play-btn"]');
+                    playBtns.forEach(function(p) { if (p.offsetParent !== null) tap(p); });
+                    document.querySelectorAll('button, a').forEach(function(b) {
+                        var bt = (b.innerText || '').trim().toLowerCase();
+                        if ((bt === 'izle' || bt === '▶ izle' || bt === 'başlat' || bt === 'oynat' || bt === 'play') && b.offsetParent !== null) {
+                            tap(b);
+                        }
+                    });
+
+                    var skipBtn = null;
+                    document.querySelectorAll('button, a, div, span').forEach(function(el) {
+                        var z = ((el.innerText || '') + ' ' + (el.className || '')).toLowerCase();
+                        if ((z.includes('skip') || z.includes('reklamı geç') || z.includes('reklami gec') || z.includes('reklamı atla')) && el.offsetParent !== null && z.length < 50) {
+                            skipBtn = el;
+                        }
+                    });
+                    if (skipBtn) {
+                        adSec++;
+                        if (adSec >= 15 || (skipBtn.innerText || '').toLowerCase().includes('skip') || (skipBtn.innerText || '').toLowerCase().includes('geç')) {
+                            tap(skipBtn);
+                            adSec = 0;
+                        }
+                    }
+
+                    var v = document.querySelector('video');
+                    var f = document.querySelector('iframe[src*="m3u8"], iframe[src*="embed"], iframe[src*="player"], iframe');
+                    var target = v || f;
+                    if (target) {
+                        target.style.setProperty('position', 'fixed', 'important');
+                        target.style.setProperty('top', '0', 'important');
+                        target.style.setProperty('left', '0', 'important');
+                        target.style.setProperty('width', '100vw', 'important');
+                        target.style.setProperty('height', '100vh', 'important');
+                        target.style.setProperty('z-index', '999999', 'important');
+                        target.style.setProperty('background', '#000', 'important');
+                        if (v && v.paused) { v.play().catch(function(){}); }
+                    }
+                }, 1000);
+            })();
+        """.trimIndent()
     }
-        private fun filterMembershipChannels(list: List<Channel>): ArrayList<Channel> {
+
+    private fun filterMembershipChannels(list: List<Channel>): ArrayList<Channel> {
         val blocked = listOf(
             "login", "signin", "sign-in", "register", "subscribe", "vip", "member",
             "giris", "giriş", "uye", "üye", "abone"
@@ -387,7 +451,7 @@ class PlayerActivity : Activity() {
     private fun initializePlayer() {
         if (player != null) return
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(5000, 15000, 1500, 2500)
+            .setBufferDurationsMs(15000, 60000, 1500, 3000)
             .build()
         player = ExoPlayer.Builder(this)
             .setLoadControl(loadControl)
@@ -404,7 +468,7 @@ class PlayerActivity : Activity() {
                         loadingSpinner.visibility = View.GONE
                         if (retryCount < 2) {
                             retryCount++
-                            loadCurrentChannel()
+                            handler.postDelayed({ loadCurrentChannel() }, 1500)
                         } else {
                             Toast.makeText(
                                 this@PlayerActivity,
@@ -427,10 +491,9 @@ class PlayerActivity : Activity() {
         showOsd()
 
         val url = ch.url.trim()
-        val isWebStream = url.startsWith("http://", true) || url.startsWith("https://", true)
         val isDirectMedia = url.contains(".m3u8", true) || url.contains(".mp4", true)
 
-        if (!isDirectMedia && isWebStream && !url.contains(".m3u8", true)) {
+        if (!isDirectMedia) {
             player?.stop()
             playerView.visibility = View.GONE
             loadingSpinner.visibility = View.GONE
@@ -439,6 +502,7 @@ class PlayerActivity : Activity() {
             return
         }
 
+        webPlayer.stopLoading()
         webPlayer.visibility = View.GONE
         playerView.visibility = View.VISIBLE
         loadingSpinner.visibility = View.VISIBLE
@@ -446,6 +510,8 @@ class PlayerActivity : Activity() {
 
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
         val mediaItem = MediaItem.fromUri(url)
         val exo = player ?: return
 
@@ -459,74 +525,47 @@ class PlayerActivity : Activity() {
         exo.play()
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-            handleRemoteDigit(keyCode - KeyEvent.KEYCODE_0)
-            return true
-        }
-        when (keyCode) {
-            KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_DPAD_UP -> {
-                if (overlayDrawer.visibility != View.VISIBLE) {
-                    switchChannel(1)
-                    return true
-                }
-            }
-            KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                if (overlayDrawer.visibility != View.VISIBLE) {
-                    switchChannel(-1)
-                    return true
-                }
-            }
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                if (overlayDrawer.visibility == View.VISIBLE) {
-                    val focusedView = overlayRecycler.focusedChild
-                    if (focusedView != null) {
-                        focusedView.performClick()
-                    } else {
-                        val holder = overlayRecycler.findViewHolderForAdapterPosition(currentIndex)
-                        holder?.itemView?.performClick()
-                    }
-                    return true
-                } else {
-                    toggleOverlayDrawer(true)
-                    return true
-                }
-            }
-            KeyEvent.KEYCODE_MENU -> {
-                toggleOverlayDrawer(overlayDrawer.visibility != View.VISIBLE)
-                return true
-            }
-            KeyEvent.KEYCODE_BACK -> {
-                if (overlayDrawer.visibility == View.VISIBLE) {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            if (overlayDrawer.visibility == View.VISIBLE) {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                     toggleOverlayDrawer(false)
                     return true
                 }
+                return super.dispatchKeyEvent(event)
+            }
+
+            if (event.keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+                handleRemoteDigit(event.keyCode - KeyEvent.KEYCODE_0)
+                return true
+            }
+
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
+                    switchChannel(-1); return true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+                    switchChannel(1); return true
+                }
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    toggleOverlayDrawer(true); return true
+                }
+                KeyEvent.KEYCODE_INFO -> {
+                    showOsd(); return true
+                }
+                KeyEvent.KEYCODE_BACK -> {
+                    finish(); return true
+                }
             }
         }
-        return super.onKeyDown(keyCode, event)
-    }
-
-    private fun releasePlayer() {
-        player?.release()
-        player = null
-    }
-
-    override fun onStart() {
-        super.onStart()
-        if (player == null) {
-            initializePlayer()
-        }
-    }
-
-    override fun onStop() {
-        super.onStop()
-        releasePlayer()
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        releasePlayer()
         handler.removeCallbacksAndMessages(null)
         webPlayer.destroy()
+        player?.release()
+        player = null
     }
 }
