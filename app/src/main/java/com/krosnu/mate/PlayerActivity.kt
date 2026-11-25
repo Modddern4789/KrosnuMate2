@@ -1,5 +1,6 @@
 package com.krosnu.mate
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -12,6 +13,11 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -37,6 +43,8 @@ import androidx.recyclerview.widget.RecyclerView
 class PlayerActivity : Activity() {
 
     private lateinit var playerView: PlayerView
+    private lateinit var webPlayer: WebView
+    private lateinit var customVideoContainer: FrameLayout
     private lateinit var osdBar: LinearLayout
     private lateinit var osdTitle: TextView
     private lateinit var digitOsd: TextView
@@ -45,8 +53,8 @@ class PlayerActivity : Activity() {
     private lateinit var overlayRecycler: RecyclerView
 
     private var player: ExoPlayer? = null
-    private var sniffer: StreamSniffer? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
     private var channelList: ArrayList<Channel> = arrayListOf()
     private var currentIndex: Int = 0
@@ -54,6 +62,7 @@ class PlayerActivity : Activity() {
     private var retryCount: Int = 0
 
     @OptIn(UnstableApi::class)
+    @SuppressLint("SetJavaScriptEnabled")
     @Suppress("UNCHECKED_CAST")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,11 +88,32 @@ class PlayerActivity : Activity() {
         }
         root.addView(playerView, FrameLayout.LayoutParams(-1, -1))
 
+        webPlayer = WebView(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.BLACK)
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.setSupportMultipleWindows(false)
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.userAgentString =
+                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        }
+        root.addView(webPlayer, FrameLayout.LayoutParams(-1, -1))
+
+        customVideoContainer = FrameLayout(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.BLACK)
+        }
+        root.addView(customVideoContainer, FrameLayout.LayoutParams(-1, -1))
+
         loadingSpinner = ProgressBar(this).apply {
             visibility = View.GONE
         }
         root.addView(loadingSpinner, FrameLayout.LayoutParams(120, 120, Gravity.CENTER))
 
+        // TV Box OK tuşuna basınca açılan kanal listesi
         overlayDrawer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#E60B111D"))
@@ -159,13 +189,7 @@ class PlayerActivity : Activity() {
         osdBar.addView(btnBack)
 
         root.addView(osdBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        root.setOnClickListener {
-            if (overlayDrawer.visibility == View.VISIBLE) toggleOverlayDrawer(false)
-            else showOsd()
-        }
-
         setContentView(root)
-        sniffer = StreamSniffer(this)
         bindOverlayList()
 
         if (channelList.isNotEmpty()) {
@@ -224,6 +248,7 @@ class PlayerActivity : Activity() {
     private fun toggleOverlayDrawer(show: Boolean) {
         if (show) {
             overlayDrawer.visibility = View.VISIBLE
+            overlayDrawer.bringToFront()
             overlayRecycler.adapter?.notifyDataSetChanged()
             overlayRecycler.scrollToPosition(currentIndex)
             overlayRecycler.post {
@@ -246,6 +271,7 @@ class PlayerActivity : Activity() {
 
     private fun showOsd() {
         osdBar.visibility = View.VISIBLE
+        osdBar.bringToFront()
         handler.removeCallbacksAndMessages("osd")
         handler.postAtTime({ osdBar.visibility = View.GONE }, "osd", android.os.SystemClock.uptimeMillis() + 4500)
     }
@@ -262,6 +288,7 @@ class PlayerActivity : Activity() {
         if (digitBuffer.length > 3) digitBuffer = digit.toString()
         digitOsd.text = digitBuffer.padStart(3, '0')
         digitOsd.visibility = View.VISIBLE
+        digitOsd.bringToFront()
 
         handler.removeCallbacksAndMessages("digit")
         handler.postAtTime({
@@ -282,18 +309,95 @@ class PlayerActivity : Activity() {
         val ch = channelList[currentIndex]
         osdTitle.text = String.format("%03d  %s | %s", currentIndex + 1, ch.country, ch.name)
         showOsd()
-        loadingSpinner.visibility = View.VISIBLE
 
-        sniffer?.sniffStream(
-            channel = ch,
-            onFound = { streamUrl, referer ->
-                playStream(streamUrl, referer)
-            },
-            onFailed = { reason ->
-                loadingSpinner.visibility = View.GONE
-                Toast.makeText(this, "${ch.name}: $reason", Toast.LENGTH_SHORT).show()
+        val isDirectStream = ch.url.contains(".m3u8", ignoreCase = true) ||
+            ch.url.contains(".mp4", ignoreCase = true)
+
+        if (isDirectStream) {
+            webPlayer.stopLoading()
+            webPlayer.visibility = View.GONE
+            customVideoContainer.visibility = View.GONE
+            playerView.visibility = View.VISIBLE
+            loadingSpinner.visibility = View.VISIBLE
+            playStream(ch.url, ch.url)
+        } else {
+            player?.stop()
+            playerView.visibility = View.GONE
+            loadingSpinner.visibility = View.VISIBLE
+            openWebFullScreen(ch)
+        }
+    }
+
+    private fun openWebFullScreen(ch: Channel) {
+        webPlayer.visibility = View.VISIBLE
+        webPlayer.webChromeClient = object : WebChromeClient() {
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                customVideoContainer.removeAllViews()
+                if (view != null) customVideoContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
+                customVideoContainer.visibility = View.VISIBLE
+                customViewCallback = callback
+                if (overlayDrawer.visibility == View.VISIBLE) overlayDrawer.bringToFront()
+                osdBar.bringToFront()
             }
-        )
+
+            override fun onHideCustomView() {
+                customVideoContainer.removeAllViews()
+                customVideoContainer.visibility = View.GONE
+                customViewCallback?.onCustomViewHidden()
+                customViewCallback = null
+            }
+        }
+
+        webPlayer.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val u = request?.url?.toString()?.lowercase() ?: return true
+                if (u.startsWith("intent:") || u.startsWith("market:") ||
+                    u.contains("doubleclick") || u.contains("googleads") || u.contains("popads")
+                ) return true
+                return false
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                loadingSpinner.visibility = View.GONE
+                val kw = ch.matchKeyword.replace("'", "\\'")
+                val js = """
+                    (function() {
+                        var kw = '$kw'.toLowerCase();
+                        if (kw) {
+                            var els = document.querySelectorAll('button, a, div, li, span');
+                            for (var i = 0; i < els.length; i++) {
+                                var t = (els[i].innerText || '').trim().toLowerCase();
+                                if (t === kw || (t.includes(kw) && t.length < 40)) {
+                                    els[i].click();
+                                    break;
+                                }
+                            }
+                        }
+                        function expandPlayer() {
+                            var v = document.querySelector('video');
+                            var f = document.querySelector('iframe[src*="m3u8"], iframe[src*="embed"], iframe[src*="player"], iframe');
+                            var target = v || f;
+                            if (target) {
+                                target.style.position = 'fixed';
+                                target.style.top = '0';
+                                target.style.left = '0';
+                                target.style.width = '100vw';
+                                target.style.height = '100vh';
+                                target.style.zIndex = '999999';
+                                target.style.background = '#000';
+                                if (v) { v.play().catch(function(){}); }
+                            }
+                        }
+                        expandPlayer();
+                        setTimeout(expandPlayer, 1500);
+                        setTimeout(expandPlayer, 3500);
+                    })();
+                """.trimIndent()
+                view?.evaluateJavascript(js, null)
+            }
+        }
+        webPlayer.loadUrl(ch.url)
     }
 
     @OptIn(UnstableApi::class)
@@ -333,7 +437,6 @@ class PlayerActivity : Activity() {
                         override fun onPlayerError(error: PlaybackException) {
                             if (retryCount < 3) {
                                 retryCount++
-                                Toast.makeText(this@PlayerActivity, "Yayın yenileniyor ($retryCount/3)...", Toast.LENGTH_SHORT).show()
                                 handler.postDelayed({ loadCurrentChannel() }, 1500)
                             } else {
                                 loadingSpinner.visibility = View.GONE
@@ -389,7 +492,7 @@ class PlayerActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
-        sniffer?.cleanup()
+        webPlayer.destroy()
         player?.release()
         player = null
     }
