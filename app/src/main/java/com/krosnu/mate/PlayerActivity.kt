@@ -8,6 +8,7 @@ import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -105,6 +106,31 @@ class PlayerActivity : Activity() {
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             settings.userAgentString =
                 "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean = false
+            }
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                    customViewCallback?.onCustomViewHidden()
+                    customViewCallback = callback
+                    customVideoContainer.removeAllViews()
+                    if (view != null) {
+                        customVideoContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
+                        customVideoContainer.visibility = View.VISIBLE
+                        customVideoContainer.bringToFront()
+                    }
+                }
+
+                override fun onHideCustomView() {
+                    customVideoContainer.removeAllViews()
+                    customVideoContainer.visibility = View.GONE
+                    customViewCallback?.onCustomViewHidden()
+                    customViewCallback = null
+                }
+            }
         }
         root.addView(webPlayer, FrameLayout.LayoutParams(-1, -1))
 
@@ -280,7 +306,7 @@ class PlayerActivity : Activity() {
         osdBar.visibility = View.VISIBLE
         osdBar.bringToFront()
         handler.removeCallbacksAndMessages("osd")
-        handler.postAtTime({ osdBar.visibility = View.GONE }, "osd", android.os.SystemClock.uptimeMillis() + 4500)
+        handler.postAtTime({ osdBar.visibility = View.GONE }, "osd", SystemClock.uptimeMillis() + 4500)
     }
 
     private fun switchChannel(delta: Int) {
@@ -309,10 +335,118 @@ class PlayerActivity : Activity() {
             } else {
                 Toast.makeText(this, "$num numaralı kanal yok", Toast.LENGTH_SHORT).show()
             }
-        }, "digit", android.os.SystemClock.uptimeMillis() + 1200)
+        }, "digit", SystemClock.uptimeMillis() + 1200)
     }
 
+    @OptIn(UnstableApi::class)
+    private fun initializePlayer() {
+        if (player != null) return
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(5000, 15000, 1500, 2500)
+            .build()
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        loadingSpinner.visibility =
+                            if (playbackState == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        loadingSpinner.visibility = View.GONE
+                        if (retryCount < 2) {
+                            retryCount++
+                            loadCurrentChannel()
+                        } else {
+                            Toast.makeText(
+                                this@PlayerActivity,
+                                "Yayın açılamadı",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                })
+            }
+        playerView.player = player
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun loadCurrentChannel() {
+        if (channelList.isEmpty()) return
+        currentIndex = currentIndex.coerceIn(0, channelList.size - 1)
+        val ch = channelList[currentIndex]
+        osdTitle.text = String.format("%03d  %s | %s", currentIndex + 1, ch.country, ch.name)
+        showOsd()
+
+        val url = ch.url.trim()
+        val isWebStream = url.startsWith("http://", true) || url.startsWith("https://", true)
+        val isDirectMedia = url.contains(".m3u8", true) || url.contains(".mp4", true)
+
+        if (!isDirectMedia && isWebStream && !url.contains(".m3u8", true)) {
+            player?.stop()
+            playerView.visibility = View.GONE
+            loadingSpinner.visibility = View.GONE
+            webPlayer.visibility = View.VISIBLE
+            webPlayer.loadUrl(url)
+            return
         }
+
+        webPlayer.visibility = View.GONE
+        playerView.visibility = View.VISIBLE
+        loadingSpinner.visibility = View.VISIBLE
+        initializePlayer()
+
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+        val mediaItem = MediaItem.fromUri(url)
+        val exo = player ?: return
+
+        if (url.contains(".m3u8", true)) {
+            val hlsSource = HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            exo.setMediaSource(hlsSource)
+        } else {
+            exo.setMediaItem(mediaItem)
+        }
+        exo.prepare()
+        exo.play()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+            handleRemoteDigit(keyCode - KeyEvent.KEYCODE_0)
+            return true
+        }
+        when (keyCode) {
+            KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_DPAD_UP -> {
+                if (overlayDrawer.visibility != View.VISIBLE) {
+                    switchChannel(1)
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (overlayDrawer.visibility != View.VISIBLE) {
+                    switchChannel(-1)
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MENU -> {
+                if (overlayDrawer.visibility != View.VISIBLE) {
+                    toggleOverlayDrawer(true)
+                    return true
+                }
+            }
+            KeyEvent.KEYCODE_BACK -> {
+                if (overlayDrawer.visibility == View.VISIBLE) {
+                    toggleOverlayDrawer(false)
+                    return true
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
 
     private fun releasePlayer() {
         player?.release()
@@ -334,5 +468,7 @@ class PlayerActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         releasePlayer()
+        handler.removeCallbacksAndMessages(null)
+        webPlayer.destroy()
     }
 }
