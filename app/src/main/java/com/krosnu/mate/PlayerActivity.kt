@@ -73,8 +73,8 @@ class PlayerActivity : Activity() {
         )
         hideSystemBars()
 
-        val rawChannels = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
-        channelList = filterMembershipChannels(rawChannels)
+        val raw = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
+        channelList = filterMembershipChannels(raw)
         currentIndex = intent.getIntExtra("index", 0)
 
         val root = FrameLayout(this).apply {
@@ -115,7 +115,7 @@ class PlayerActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    view?.evaluateJavascript(autoControllerScript(), null)
+                    view?.evaluateJavascript(buildJs(), null)
                 }
             }
 
@@ -237,73 +237,42 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun autoControllerScript(): String {
-        val parts = listOf(
-            "(function(){if(window.__krosnuInit)return;window.__krosnuInit=true;",
-            "['keydown','keypress','keyup'].forEach(function(ev){",
-            "window.addEventListener(ev,function(e){if(e.isTrusted){e.stopImmediatePropagation();e.preventDefault();}},true);",
-            "});",
-            "var adSec=0;var fsDone=false;",
-            "function collectDocs(root,out){out=out||[];if(!root)return out;out.push(root);",
-            "root.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)collectDocs(f.contentDocument,out);}catch(e){}});",
-            "return out;}",
-            "function tap(el){if(!el)return;",
-            "try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}",
-            "['pointerdown','mousedown','mouseup','click'].forEach(function(act){",
-            "try{el.dispatchEvent(new MouseEvent(act,{bubbles:true,cancelable:true,view:window}));}catch(e){}});",
-            "try{el.click();}catch(e){}}",
-            "function hideAuth(doc){",
-            "doc.querySelectorAll('a,button,div,span,form,section,aside,input').forEach(function(el){",
-            "var txt=(el.innerText||el.textContent||'').trim().toLowerCase();",
-            "var isAuth=['giriş','giriş yap','üye ol','üyelik','login','sign in','register'].indexOf(txt)>=0;",
-            "if(isAuth&&el.offsetWidth<320&&el.offsetHeight<120){el.style.setProperty('display','none','important');}",
-            "if(el.tagName&&el.tagName.toLowerCase()==='input'&&el.type==='password'){",
-            "var box=el.closest('form,div,section')||el;",
-            "if(box&&box.offsetHeight<420){box.style.setProperty('display','none','important');}}});}",
-            "function startMedia(docs){docs.forEach(function(doc){",
-            "var btns=doc.querySelectorAll('button,div,span,a');",
-            "for(var i=0;i<btns.length;i++){var b=btns[i];var c=((b.className||'')+' '+(b.getAttribute('aria-label')||'')).toLowerCase();",
-            "if(c.indexOf('play')>=0&&b.offsetParent!==null){tap(b);break;}}",
-            "doc.querySelectorAll('video').forEach(function(v){if(v.paused){try{var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(e){}}});});}",
-            "function enterFs(docs){for(var i=0;i<docs.length;i++){var doc=docs[i];",
-            "if(doc.fullscreenElement||doc.webkitFullscreenElement){fsDone=true;return true;}",
-            "var els=doc.querySelectorAll('button,div,span,a');",
-            "for(var j=0;j<els.length;j++){var f=els[j];var c=((f.className||'')+' '+(f.getAttribute('aria-label')||'')).toLowerCase();",
-            "if(c.indexOf('fullscreen')>=0&&f.offsetParent!==null){tap(f);fsDone=true;return true;}}",
-            "var vid=doc.querySelector('video');",
-            "if(vid){var req=vid.requestFullscreen||vid.webkitRequestFullscreen;",
-            "if(req){try{req.call(vid);fsDone=true;return true;}catch(e){}}}}return false;}",
-            "setInterval(function(){var docs=collectDocs(document);",
-            "docs.forEach(function(d){hideAuth(d);});",
-            "startMedia(docs);",
-            "var skipTarget=null;var adVid=null;",
-            "for(var i=0;i<docs.length;i++){var d=docs[i];",
-            "var list=d.querySelectorAll('button,a,div,span,[role=\"button\"]');",
-            "for(var j=0;j<list.length;j++){var el=list[j];",
-            "var info=((el.innerText||el.textContent||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();",
-            "var hit=info.indexOf('skip')>=0||info.indexOf('reklamı geç')>=0||info.indexOf('geç')>=0||info.indexOf('atla')>=0;",
-            "if(hit&&el.offsetParent!==null){skipTarget=el;break;}}",
-            "if(skipTarget)break;",
-            "var vids=d.querySelectorAll('video');",
-            "for(var k=0;k<vids.length;k++){var v=vids[k];if(!v.paused&&v.duration>0&&v.duration<=35){adVid=v;break;}}}",
-            "if(skipTarget||adVid){adSec+=1;if(adSec>=15){",
-            "if(skipTarget){tap(skipTarget);}",
-            "if(adVid&&isFinite(adVid.duration)){try{adVid.currentTime=Math.max(adVid.currentTime,adVid.duration-0.2);}catch(e){}}",
-            "adSec=0;fsDone=false;setTimeout(function(){enterFs(collectDocs(document));},500);}}",
-            "else{adSec=0;if(!fsDone){enterFs(docs);}}",
-            "},1000);})();"
-        )
-        return parts.joinToString("")
+    private fun buildJs(): String {
+        val lockKeys = "['keydown','keypress','keyup'].forEach(function(e){window.addEventListener(e,function(x){if(x.isTrusted){x.stopImmediatePropagation();x.preventDefault();}},true);});"
+        val getDocs = "function dAll(r,o){o=o||[];if(!r)return o;o.push(r);r.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)dAll(f.contentDocument,o);}catch(e){}});return o;}"
+        val clickFn = "function tap(el){if(!el)return;try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}" +
+            "['pointerdown','mousedown','mouseup','click'].forEach(function(k){try{el.dispatchEvent(new MouseEvent(k,{bubbles:true,cancelable:true,view:window}));}catch(e){}});try{el.click();}catch(e){}}"
+        val fsFn = "function fsNow(ds){for(var i=0;i<ds.length;i++){var d=ds[i];if(d.fullscreenElement||d.webkitFullscreenElement){fs=true;return true;}" +
+            "var b=d.querySelector('[class*=\"fullscreen\"],.vjs-fullscreen-control,.jw-icon-fullscreen');" +
+            "if(b&&b.offsetParent!==null){tap(b);fs=true;return true;}" +
+            "var v=d.querySelector('video');if(v){var r=v.requestFullscreen||v.webkitRequestFullscreen;if(r){try{r.call(v);fs=true;return true;}catch(e){}}}}return false;}"
+        val loopFn = "var t=0;var fs=false;setInterval(function(){var ds=dAll(document);" +
+            "ds.forEach(function(d){d.querySelectorAll('a,button,div,span,form,input').forEach(function(el){" +
+            "var s=(el.innerText||el.textContent||'').trim().toLowerCase();" +
+            "if((['giriş','giriş yap','üye ol','üyelik','login','sign in','register'].indexOf(s)>=0&&el.offsetWidth<320&&el.offsetHeight<120)||(el.type==='password'&&el.closest('form,div,section'))){" +
+            "(el.closest('form,div,section')||el).style.setProperty('display','none','important');}});" +
+            "var p=d.querySelector('.vjs-big-play-button,.jw-icon-playback,[class*=\"play\"]');if(p&&p.offsetParent!==null)tap(p);" +
+            "d.querySelectorAll('video').forEach(function(v){if(v.paused){try{var pr=v.play();if(pr&&pr.catch)pr.catch(function(){});}catch(e){}}});});" +
+            "var sk=null;var ad=null;for(var i=0;i<ds.length;i++){var d=ds[i];" +
+            "var c=Array.from(d.querySelectorAll('button,a,div,span')).find(function(el){" +
+            "var x=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();" +
+            "return(x.indexOf('skip')>=0||x.indexOf('geç')>=0||x.indexOf('atla')>=0)&&el.offsetParent!==null;});" +
+            "if(c){sk=c;break;}" +
+            "var v=Array.from(d.querySelectorAll('video')).find(function(x){return !x.paused&&x.duration>0&&x.duration<=35;});" +
+            "if(v&&!ad)ad=v;}" +
+            "if(sk||ad){t++;if(t>=15){if(sk)tap(sk);if(ad&&isFinite(ad.duration)){try{ad.currentTime=Math.max(ad.currentTime,ad.duration-0.2);}catch(e){}}" +
+            "t=0;fs=false;setTimeout(function(){fsNow(dAll(document));},500);}}else{t=0;if(!fs)fsNow(ds);}},1000);"
+        return "(function(){if(window.__k)return;window.__k=1;" + lockKeys + getDocs + clickFn + fsFn + loopFn + "})();"
     }
 
     private fun filterMembershipChannels(list: List<Channel>): ArrayList<Channel> {
-        val blockedKeywords = listOf(
+        val blocked = listOf(
             "login", "signin", "sign-in", "register", "subscribe", "vip", "member",
             "giris", "giriş", "uye", "üye", "abone"
         )
         return ArrayList(list.filter { ch ->
             val target = "${ch.name} ${ch.url}".lowercase()
-            blockedKeywords.none { kw -> target.contains(kw) }
+            blocked.none { kw -> target.contains(kw) }
         })
     }
 
@@ -459,4 +428,41 @@ class PlayerActivity : Activity() {
         showOsd()
 
         val url = ch.url.trim()
-        val isWebStream = url.startsWith("http://", true) || url.startsWith("https:
+        val isWebStream = url.startsWith("http://", true) || url.startsWith("https://", true)
+        val isDirectMedia = url.contains(".m3u8", true) || url.contains(".mp4", true)
+
+        if (!isDirectMedia && isWebStream && !url.contains(".m3u8", true)) {
+            player?.stop()
+            playerView.visibility = View.GONE
+            loadingSpinner.visibility = View.GONE
+            webPlayer.visibility = View.VISIBLE
+            webPlayer.loadUrl(url)
+            return
+        }
+
+        webPlayer.visibility = View.GONE
+        playerView.visibility = View.VISIBLE
+        loadingSpinner.visibility = View.VISIBLE
+        initializePlayer()
+
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+        val mediaItem = MediaItem.fromUri(url)
+        val exo = player ?: return
+
+        if (url.contains(".m3u8", true)) {
+            val hlsSource = HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            exo.setMediaSource(hlsSource)
+        } else {
+            exo.setMediaItem(mediaItem)
+        }
+        exo.prepare()
+        exo.play()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+            handleRemoteDigit(keyCode - KeyEvent.KEYCODE_0)
+            return true
+        }
+        when (ke
