@@ -117,7 +117,8 @@ class PlayerActivity : Activity() {
                 private val adHosts = listOf(
                     "googlesyndication.com", "doubleclick.net", "googleadservices.com",
                     "adservice.google", "pagead2.", "adnxs.com", "popads.net",
-                    "yandex.ru/ads", "an.yandex.ru", "taboola.com", "outbrain.com"
+                    "yandex.ru/ads", "an.yandex.ru", "taboola.com", "outbrain.com",
+                    "smartcell", "kralbet", "tipobet", "multiwin", "popcash", "adsterra"
                 )
 
                 override fun shouldInterceptRequest(
@@ -276,27 +277,28 @@ class PlayerActivity : Activity() {
                 }
                 var kw = norm('$kw');
                 setInterval(function(){
-                    document.querySelectorAll('ins.adsbygoogle,[id^="google_ads"],[id^="aswift"],[class*="adsbygoogle"]').forEach(function(a){a.remove();});
+                    document.querySelectorAll('ins.adsbygoogle,[id^="google_ads"],[id^="aswift"],[class*="adsbygoogle"],a[href*="bet"],a[href*="multiwin"],[class*="reklam"],[id*="reklam"]').forEach(function(a){a.remove();});
                     if(kw && !window.__krosnuChDone){
-                        var items = document.querySelectorAll('li,a,button,[role="button"],[onclick],div,span');
+                        var items = Array.prototype.slice.call(document.querySelectorAll('li,a,button,[role="button"],[onclick],div,span')).reverse();
                         var found = null;
                         for(var i=0;i<items.length;i++){
                             var el = items[i];
-                            if(el.children.length > 2) continue;
-                            var t = norm(el.innerText || el.getAttribute('title') || '');
-                            if(t && (t === kw || (t.length < 30 && t.indexOf(kw) !== -1))){
+                            if(el.children.length > 1) continue;
+                            var t = norm(el.innerText || el.getAttribute('title') || el.getAttribute('alt') || '');
+                            if(t && (t === kw || (t.length < 28 && t.indexOf(kw) !== -1))){
                                 found = el;
                                 break;
                             }
                         }
                         if(found){
-                            if(found.offsetParent === null && !window.__krosnuMenuOpen){
+                            var r = found.getBoundingClientRect();
+                            if((found.offsetParent === null || r.height === 0) && !window.__krosnuMenuOpen){
                                 window.__krosnuMenuOpen = true;
-                                var menuBtns = document.querySelectorAll('button,a,div,span');
+                                var menuBtns = Array.prototype.slice.call(document.querySelectorAll('button,a,div,span')).reverse();
                                 for(var m=0;m<menuBtns.length;m++){
                                     if(norm(menuBtns[m].innerText) === 'kanal'){ menuBtns[m].click(); break; }
                                 }
-                            } else {
+                            } else if(r.height > 0) {
                                 window.__krosnuChDone = true;
                                 found.click();
                             }
@@ -307,8 +309,9 @@ class PlayerActivity : Activity() {
                         var b = btns[j];
                         if(b.offsetParent === null) continue;
                         var txt = norm(b.innerText);
+                        if(txt.indexOf('sayta') !== -1 || txt.indexOf('kecid') !== -1) continue;
                         var meta = norm((b.className||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||''));
-                        if(txt.length < 25 && /\b(skip|skip ad|reklami gec|reklami atla)\b/.test(txt + ' ' + meta)){
+                        if(txt.length < 25 && /\b(skip|skip ad|reklami gec|reklami atla|buraxmaq|reklami burax)\b/.test(txt + ' ' + meta)){
                             b.click();
                         }
                         if(!window.__krosnuPlayDone && (txt==='izle' || txt==='baslat' || txt==='oynat' || meta.indexOf('vjs-big-play')!==-1 || meta.indexOf('plyr__control--overlaid')!==-1)){
@@ -319,6 +322,9 @@ class PlayerActivity : Activity() {
                             window.__krosnuFsDone = true;
                             b.click();
                         }
+                    }
+                    if(!kw || window.__krosnuChDone){
+                        document.querySelectorAll('header,nav,.header,.top-bar').forEach(function(h){ h.style.display = 'none'; });
                     }
                     var vids = document.querySelectorAll('video');
                     if(vids.length > 0){
@@ -343,7 +349,7 @@ class PlayerActivity : Activity() {
                     for(var f=0;f<frms.length;f++){
                         var fr = frms[f];
                         var src = (fr.src||'').toLowerCase();
-                        if(/doubleclick|googlesyndication|adservice|yandex|banner|ads|recaptcha|facebook|twitter/.test(src)) continue;
+                        if(/doubleclick|googlesyndication|adservice|yandex|banner|ads|recaptcha|facebook|twitter|bet/.test(src)) continue;
                         var area = fr.offsetWidth * fr.offsetHeight;
                         if(fr.offsetWidth > 180 && fr.offsetHeight > 100 && area > bestArea){
                             bestArea = area;
