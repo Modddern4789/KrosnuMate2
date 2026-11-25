@@ -73,8 +73,8 @@ class PlayerActivity : Activity() {
         )
         hideSystemBars()
 
-        val rawChannels = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
-        channelList = filterMembershipChannels(rawChannels)
+        val raw = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
+        channelList = filterMembershipChannels(raw)
         currentIndex = intent.getIntExtra("index", 0)
 
         val root = FrameLayout(this).apply {
@@ -115,8 +115,7 @@ class PlayerActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    val script = buildAutomationScript()
-                    view?.evaluateJavascript(script, null)
+                    view?.evaluateJavascript(buildJs(), null)
                 }
             }
 
@@ -238,65 +237,226 @@ class PlayerActivity : Activity() {
         }
     }
 
-    private fun buildAutomationScript(): String {
-        return "(function(){" +
-            "if(window.__krosnuAuto)return;window.__krosnuAuto=1;" +
-            "['keydown','keypress','keyup'].forEach(function(ev){" +
-            "window.addEventListener(ev,function(e){if(e.isTrusted){e.stopImmediatePropagation();e.preventDefault();}},true);" +
-            "});" +
-            "var adTimer=0;var fsDone=false;" +
-            "function docsOf(root,out){out=out||[];if(!root)return out;out.push(root);" +
-            "root.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)docsOf(f.contentDocument,out);}catch(e){}});" +
-            "return out;}" +
-            "function clickEl(el){if(!el)return;" +
-            "try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}" +
-            "['pointerdown','mousedown','mouseup','click'].forEach(function(t){" +
-            "try{el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));}catch(e){}});" +
-            "try{el.click();}catch(e){}}" +
-            "function hideAuth(d){" +
-            "d.querySelectorAll('a,button,div,span,form,section,aside,input').forEach(function(el){" +
-            "var txt=(el.innerText||el.textContent||'').trim().toLowerCase();" +
-            "var auth=['giriş','giriş yap','üye ol','üyelik','login','sign in','register'].indexOf(txt)>=0;" +
-            "if(auth&&el.offsetWidth<320&&el.offsetHeight<120){el.style.setProperty('display','none','important');}" +
-            "if(el.tagName&&el.tagName.toLowerCase()==='input'&&el.type==='password'){" +
-            "var box=el.closest('form,div,section')||el;" +
-            "if(box&&box.offsetHeight<420){box.style.setProperty('display','none','important');}}" +
-            "});}" +
-            "function autoPlay(ds){ds.forEach(function(d){" +
-            "var b=d.querySelector('button[aria-label*=\"play\" i],button[title*=\"play\" i],.vjs-big-play-button,.jw-icon-playback,[class*=\"play-btn\"],[class*=\"play_button\"],[class*=\"big-play\"]');" +
-            "if(b&&b.offsetParent!==null){clickEl(b);}" +
-            "d.querySelectorAll('video').forEach(function(v){if(v.paused){try{var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(e){}}});" +
-            "});}" +
-            "function autoFs(ds){for(var i=0;i<ds.length;i++){var d=ds[i];" +
-            "if(d.fullscreenElement||d.webkitFullscreenElement){fsDone=true;return true;}" +
-            "var f=d.querySelector('button[aria-label*=\"fullscreen\" i],button[title*=\"fullscreen\" i],.vjs-fullscreen-control,.jw-icon-fullscreen,[class*=\"fullscreen-btn\"],[class*=\"fullscreen\"]');" +
-            "if(f&&f.offsetParent!==null){clickEl(f);fsDone=true;return true;}" +
-            "var v=d.querySelector('video');" +
-            "if(v){var r=v.requestFullscreen||v.webkitRequestFullscreen||v.mozRequestFullScreen;" +
-            "if(r){try{r.call(v);fsDone=true;return true;}catch(e){}}}}" +
-            "return false;}" +
-            "setInterval(function(){" +
-            "var ds=docsOf(document);" +
-            "ds.forEach(function(d){hideAuth(d);});" +
-            "autoPlay(ds);" +
-            "var skip=null;var adVid=null;" +
-            "for(var i=0;i<ds.length;i++){var d=ds[i];" +
-            "var c=Array.from(d.querySelectorAll('button,a,div,span,[role=\"button\"]')).find(function(el){" +
-            "var t=(el.innerText||el.textContent||'').trim().toLowerCase();" +
-            "var cl=(el.className||'').toString().toLowerCase();" +
-            "var id=(el.id||'').toString().toLowerCase();" +
-            "var mT=t.indexOf('skip')>=0||t.indexOf('reklamı geç')>=0||t.indexOf('geç')>=0||t.indexOf('atla')>=0;" +
-            "var mA=cl.indexOf('skip')>=0||id.indexOf('skip')>=0||cl.indexOf('ad-skip')>=0||cl.indexOf('close-ad')>=0;" +
-            "var rc=el.getBoundingClientRect?el.getBoundingClientRect():null;" +
-            "var vis=(el.offsetParent!==null)||(rc&&rc.width>0&&rc.height>0);" +
-            "return vis&&(mT||mA);});" +
-            "if(c){skip=c;break;}" +
-            "var v=Array.from(d.querySelectorAll('video')).find(function(x){return !x.paused&&x.duration>0&&x.duration<=35;});" +
-            "if(v&&!adVid){adVid=v;}}" +
-            "if(skip||adVid){adTimer+=1;if(adTimer>=15){" +
-            "if(skip){clickEl(skip);}" +
-            "if(adVid&&isFinite(adVid.duration)){try{adVid.currentTime=Math.max(adVid.currentTime,adVid.duration-0.2);}catch(e){}}" +
-            "adTimer=0;fsDone=false;" +
-            "setTimeout(function(){autoFs(docsOf(document));},500);}}" +
-            "else{adTimer=0;if
-        
+    private fun buildJs(): String {
+        val p1 = "(function(){if(window.__k)return;window.__k=1;"
+        val p2 = "['keydown','keypress','keyup'].forEach(function(e){window.addEventListener(e,function(x){if(x.isTrusted){x.stopImmediatePropagation();x.preventDefault();}},true);});"
+        val p3 = "var t=0;var fs=false;function allDocs(r,a){a=a||[];if(!r)return a;a.push(r);r.querySelectorAll('iframe').forEach(function(f){try{if(f.contentDocument)allDocs(f.contentDocument,a);}catch(e){}});return a;}"
+        val p4 = "function hit(el){if(!el)return;try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}"
+        val p5 = "['pointerdown','mousedown','mouseup','click'].forEach(function(k){try{el.dispatchEvent(new MouseEvent(k,{bubbles:true,cancelable:true,view:window}));}catch(e){}});try{el.click();}catch(e){}}"
+        val p6 = "function goFs(ds){for(var i=0;i<ds.length;i++){var d=ds[i];if(d.fullscreenElement||d.webkitFullscreenElement){fs=true;return true;}"
+        val p7 = "var b=d.querySelector('[class*=\"fullscreen\"],.vjs-fullscreen-control,.jw-icon-fullscreen');if(b&&b.offsetParent!==null){hit(b);fs=true;return true;}"
+        val p8 = "var v=d.querySelector('video');if(v){var r=v.requestFullscreen||v.webkitRequestFullscreen;if(r){try{r.call(v);fs=true;return true;}catch(e){}}}}return false;}"
+        val p9 = "setInterval(function(){var ds=allDocs(document);ds.forEach(function(d){"
+        val p10 = "d.querySelectorAll('a,button,div,span,form,input').forEach(function(el){var s=(el.innerText||el.textContent||'').trim().toLowerCase();"
+        val p11 = "if((['giriş','giriş yap','üye ol','üyelik','login','sign in','register'].indexOf(s)>=0&&el.offsetWidth<320&&el.offsetHeight<120)||(el.type==='password'&&el.closest('form,div,section'))){"
+        val p12 = "(el.closest('form,div,section')||el).style.setProperty('display','none','important');}});"
+        val p13 = "var p=d.querySelector('.vjs-big-play-button,.jw-icon-playback,[class*=\"play\"]');if(p&&p.offsetParent!==null)hit(p);"
+        val p14 = "d.querySelectorAll('video').forEach(function(v){if(v.paused){try{var pr=v.play();if(pr&&pr.catch)pr.catch(function(){});}catch(e){}}});});"
+        val p15 = "var sk=null;var ad=null;for(var i=0;i<ds.length;i++){var d=ds[i];"
+        val p16 = "var c=Array.from(d.querySelectorAll('button,a,div,span')).find(function(el){var x=((el.innerText||'')+' '+(el.className||'')+' '+(el.id||'')).toLowerCase();"
+        val p17 = "return(x.indexOf('skip')>=0||x.indexOf('geç')>=0||x.indexOf('atla')>=0)&&el.offsetParent!==null;});if(c){sk=c;break;}"
+        val p18 = "var v=Array.from(d.querySelectorAll('video')).find(function(x){return !x.paused&&x.duration>0&&x.duration<=35;});if(v&&!ad)ad=v;}"
+        val p19 = "if(sk||ad){t++;if(t>=15){if(sk)hit(sk);if(ad&&isFinite(ad.duration)){try{ad.currentTime=Math.max(ad.currentTime,ad.duration-0.2);}catch(e){}}"
+        val p20 = "t=0;fs=false;setTimeout(function(){goFs(allDocs(document));},500);}}else{t=0;if(!fs)goFs(ds);}},1000);})();"
+        return p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 + p10 + p11 + p12 + p13 + p14 + p15 + p16 + p17 + p18 + p19 + p20
+    }
+
+    private fun filterMembershipChannels(list: List<Channel>): ArrayList<Channel> {
+        val blocked = listOf(
+            "login", "signin", "sign-in", "register", "subscribe", "vip", "member",
+            "giris", "giriş", "uye", "üye", "abone"
+        )
+        return ArrayList(list.filter { ch ->
+            val target = "${ch.name} ${ch.url}".lowercase()
+            blocked.none { kw -> target.contains(kw) }
+        })
+    }
+
+    private fun createRowBg(isCurrent: Boolean): StateListDrawable {
+        val focused = GradientDrawable().apply {
+            setColor(Color.parseColor("#1E3A5F"))
+            setStroke(4, Color.parseColor("#38BDF8"))
+            cornerRadius = 8f
+        }
+        val normal = GradientDrawable().apply {
+            setColor(if (isCurrent) Color.parseColor("#1B2D3E") else Color.TRANSPARENT)
+            cornerRadius = 8f
+        }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(), normal)
+        }
+    }
+
+    private fun bindOverlayList() {
+        overlayRecycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                val tv = TextView(parent.context).apply {
+                    layoutParams = RecyclerView.LayoutParams(-1, -2)
+                    setPadding(24, 20, 24, 20)
+                    textSize = 15f
+                    setTextColor(Color.WHITE)
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    isClickable = true
+                }
+                return object : RecyclerView.ViewHolder(tv) {}
+            }
+
+            override fun getItemCount() = channelList.size
+
+            override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+                val ch = channelList[position]
+                val tv = holder.itemView as TextView
+                tv.text = String.format("%03d  %s | %s", position + 1, ch.country, ch.name)
+                tv.background = createRowBg(position == currentIndex)
+                tv.setOnClickListener {
+                    currentIndex = position
+                    retryCount = 0
+                    toggleOverlayDrawer(false)
+                    loadCurrentChannel()
+                }
+            }
+        }
+    }
+
+    private fun toggleOverlayDrawer(show: Boolean) {
+        if (show) {
+            overlayDrawer.visibility = View.VISIBLE
+            overlayDrawer.bringToFront()
+            overlayRecycler.adapter?.notifyDataSetChanged()
+            overlayRecycler.scrollToPosition(currentIndex)
+            overlayRecycler.post {
+                overlayRecycler.findViewHolderForAdapterPosition(currentIndex)?.itemView?.requestFocus()
+                    ?: overlayRecycler.requestFocus()
+            }
+        } else {
+            overlayDrawer.visibility = View.GONE
+        }
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).let { controller ->
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    private fun showOsd() {
+        osdBar.visibility = View.VISIBLE
+        osdBar.bringToFront()
+        handler.removeCallbacksAndMessages("osd")
+        handler.postAtTime({ osdBar.visibility = View.GONE }, "osd", SystemClock.uptimeMillis() + 4500)
+    }
+
+    private fun switchChannel(delta: Int) {
+        if (channelList.isEmpty()) return
+        retryCount = 0
+        currentIndex = (currentIndex + delta + channelList.size) % channelList.size
+        loadCurrentChannel()
+    }
+
+    private fun handleRemoteDigit(digit: Int) {
+        digitBuffer += digit.toString()
+        if (digitBuffer.length > 3) digitBuffer = digit.toString()
+        digitOsd.text = digitBuffer.padStart(3, '0')
+        digitOsd.visibility = View.VISIBLE
+        digitOsd.bringToFront()
+
+        handler.removeCallbacksAndMessages("digit")
+        handler.postAtTime({
+            digitOsd.visibility = View.GONE
+            val num = digitBuffer.toIntOrNull() ?: 0
+            digitBuffer = ""
+            if (num in 1..channelList.size) {
+                retryCount = 0
+                currentIndex = num - 1
+                loadCurrentChannel()
+            } else {
+                Toast.makeText(this, "$num numaralı kanal yok", Toast.LENGTH_SHORT).show()
+            }
+        }, "digit", SystemClock.uptimeMillis() + 1200)
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun initializePlayer() {
+        if (player != null) return
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(5000, 15000, 1500, 2500)
+            .build()
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        loadingSpinner.visibility =
+                            if (playbackState == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        loadingSpinner.visibility = View.GONE
+                        if (retryCount < 2) {
+                            retryCount++
+                            loadCurrentChannel()
+                        } else {
+                            Toast.makeText(
+                                this@PlayerActivity,
+                                "Yayın açılamadı",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                })
+            }
+        playerView.player = player
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun loadCurrentChannel() {
+        if (channelList.isEmpty()) return
+        currentIndex = currentIndex.coerceIn(0, channelList.size - 1)
+        val ch = channelList[currentIndex]
+        osdTitle.text = String.format("%03d  %s | %s", currentIndex + 1, ch.country, ch.name)
+        showOsd()
+
+        val url = ch.url.trim()
+        val isWebStream = url.startsWith("http://", true) || url.startsWith("https://", true)
+        val isDirectMedia = url.contains(".m3u8", true) || url.contains(".mp4", true)
+
+        if (!isDirectMedia && isWebStream && !url.contains(".m3u8", true)) {
+            player?.stop()
+            playerView.visibility = View.GONE
+            loadingSpinner.visibility = View.GONE
+            webPlayer.visibility = View.VISIBLE
+            webPlayer.loadUrl(url)
+            return
+        }
+
+        webPlayer.visibility = View.GONE
+        playerView.visibility = View.VISIBLE
+        loadingSpinner.visibility = View.VISIBLE
+        initializePlayer()
+
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+        val mediaItem = MediaItem.fromUri(url)
+        val exo = player ?: return
+
+        if (url.contains(".m3u8", true)) {
+            val hlsSource = HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+            exo.setMediaSource(hlsSource)
+        } else {
+            exo.setMediaItem(mediaItem)
+        }
+        exo.prepare()
+        exo.play()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+            handleRemoteDigit(keyCode - KeyEvent.KEYCODE_0)
+            return tr
