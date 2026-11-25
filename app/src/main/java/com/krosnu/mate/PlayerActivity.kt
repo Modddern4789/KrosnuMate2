@@ -1,200 +1,478 @@
 package com.krosnu.mate
 
-import org.json.JSONArray
-import java.io.Serializable
-import java.net.URL
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
+import androidx.annotation.OptIn
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.ui.PlayerView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 
-data class Channel(
-    val id: String,
-    val country: String,
-    val source: String,
-    val name: String,
-    val category: String,
-    val url: String,
-    val matchKeyword: String = ""
-) : Serializable
+class PlayerActivity : Activity() {
 
-object ChannelRepository {
+    private lateinit var playerView: PlayerView
+    private lateinit var webPlayer: WebView
+    private lateinit var customVideoContainer: FrameLayout
+    private lateinit var osdBar: LinearLayout
+    private lateinit var osdTitle: TextView
+    private lateinit var digitOsd: TextView
+    private lateinit var loadingSpinner: ProgressBar
+    private lateinit var overlayDrawer: LinearLayout
+    private lateinit var overlayRecycler: RecyclerView
 
-    const val M3U_AZ = "https://iptv-org.github.io/iptv/countries/az.m3u"
-    const val M3U_TR = "https://iptv-org.github.io/iptv/countries/tr.m3u"
-    const val M3U_RU = "https://iptv-org.github.io/iptv/countries/ru.m3u"
+    private var player: ExoPlayer? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
 
-    private val AZ_ORDER = listOf(
-        "xəzər", "xezer", "khazar", "aztv", "az tv", "ictimai", "itv",
-        "atv", "azad", "space", "arb 24", "arb24", "arb",
-        "real tv", "realtv", "baku tv", "bakutv", "idman", "cbc sport",
-        "cbc", "medeniyyet", "mədəniyyət", "medeniyet", "dunya", "dünya"
-    )
+    private var channelList: ArrayList<Channel> = arrayListOf()
+    private var currentIndex: Int = 0
+    private var digitBuffer: String = ""
+    private var retryCount: Int = 0
 
-    private val TR_ORDER = listOf(
-        "trt 1", "trt1", "atv", "kanal d", "show", "star", "tv8", "tv 8",
-        "now", "kanal 7", "kanal7", "beyaz", "trt haber", "cnn",
-        "habertürk", "haberturk", "ntv", "a haber", "sözcü", "sozcu",
-        "trt spor", "a spor"
-    )
-
-    fun sortGroupedByChannel(list: List<Channel>): List<Channel> {
-        return list.sortedWith(compareBy<Channel>(
-            {
-                when (it.country) {
-                    "AZ" -> 0
-                    "TR" -> 1
-                    "RU" -> 2
-                    else -> 3
-                }
-            },
-            {
-                val lower = it.name.lowercase()
-                val order = if (it.country == "AZ") AZ_ORDER else if (it.country == "TR") TR_ORDER else emptyList()
-                val idx = order.indexOfFirst { kw -> lower.contains(kw) }
-                if (idx == -1) 999 else idx
-            },
-            { it.name.lowercase() }
-        ))
-    }
-
-    fun getDefaultChannels(): List<Channel> = sortGroupedByChannel(
-        listOf(
-            // YODA.AZ — 29 KANAL (Üyeliksiz, Direkt Video)
-            Channel("yoda-1", "AZ", "YODA", "AzTV (Yoda)", "Ümumi", "https://yoda.az/tv/", "AZTV"),
-            Channel("yoda-2", "AZ", "YODA", "Xəzər TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "XƏZƏR"),
-            Channel("yoda-3", "AZ", "YODA", "İctimai TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "İctimai"),
-            Channel("yoda-4", "AZ", "YODA", "Baku TV (Yoda)", "Xəbər", "https://yoda.az/tv/", "Baku TV"),
-            Channel("yoda-5", "AZ", "YODA", "İdman TV (Yoda)", "İdman", "https://yoda.az/tv/", "İdman TV"),
-            Channel("yoda-6", "AZ", "YODA", "Biznes TV (Yoda)", "Xəbər", "https://yoda.az/tv/", "BIZNES TV"),
-            Channel("yoda-7", "AZ", "YODA", "Naxçıvan TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "Naxçıvan TV"),
-            Channel("yoda-8", "AZ", "YODA", "Real TV (Yoda)", "Xəbər", "https://yoda.az/tv/", "Real TV"),
-            Channel("yoda-9", "AZ", "YODA", "Qafqaz TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "Qafqaz TV"),
-            Channel("yoda-10", "AZ", "YODA", "ATV (Yoda)", "Ümumi", "https://yoda.az/tv/", "ATV"),
-            Channel("yoda-11", "AZ", "YODA", "ARB 24 (Yoda)", "Xəbər", "https://yoda.az/tv/", "ARB24"),
-            Channel("yoda-12", "AZ", "YODA", "APA TV (Yoda)", "Xəbər", "https://yoda.az/tv/", "APA TV"),
-            Channel("yoda-13", "TR", "YODA", "Haber Global (Yoda)", "Xəbər", "https://yoda.az/tv/", "Haber Global"),
-            Channel("yoda-14", "AZ", "YODA", "TMB TV (Yoda)", "Musiqi", "https://yoda.az/tv/", "TMB TV"),
-            Channel("yoda-15", "AZ", "YODA", "TMB Azərbaycan (Yoda)", "Musiqi", "https://yoda.az/tv/", "TMB Azərbaycan"),
-            Channel("yoda-16", "AZ", "YODA", "ARB (Yoda)", "Ümumi", "https://yoda.az/tv/", "ARB"),
-            Channel("yoda-17", "AZ", "YODA", "Kanal S (Yoda)", "Ümumi", "https://yoda.az/tv/", "Kanal S"),
-            Channel("yoda-18", "AZ", "YODA", "Kanal 35 (Yoda)", "Ümumi", "https://yoda.az/tv/", "Kanal 35"),
-            Channel("yoda-19", "AZ", "YODA", "ELTV (Yoda)", "Ümumi", "https://yoda.az/tv/", "ELTV"),
-            Channel("yoda-20", "AZ", "YODA", "ARB Günəş (Yoda)", "Uşaq", "https://yoda.az/tv/", "ARB GÜNƏŞ"),
-            Channel("yoda-21", "AZ", "YODA", "CBC (Yoda)", "Ümumi", "https://yoda.az/tv/", "CBC"),
-            Channel("yoda-22", "AZ", "YODA", "Mədəniyyət (Yoda)", "Ümumi", "https://yoda.az/tv/", "Mədəniyyət"),
-            Channel("yoda-23", "AZ", "YODA", "Space TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "Space"),
-            Channel("yoda-24", "AZ", "YODA", "Vostok TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "Vostok TV"),
-            Channel("yoda-25", "AZ", "YODA", "Show Plus TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "Show Plus TV"),
-            Channel("yoda-26", "AZ", "YODA", "MTV Azerbaijan (Yoda)", "Musiqi", "https://yoda.az/tv/", "MTV Azerbaijan"),
-            Channel("yoda-27", "AZ", "YODA", "SH TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "SH TV"),
-            Channel("yoda-28", "AZ", "YODA", "VIP HD (Yoda)", "Ümumi", "https://yoda.az/tv/", "VIP HD"),
-            Channel("yoda-29", "AZ", "YODA", "Dunya TV (Yoda)", "Ümumi", "https://yoda.az/tv/", "Dunya TV"),
-
-            // CANLITV.COM — AZƏRBAYCAN & TÜRKİYƏ (Üyeliksiz)
-            Channel("az-itv", "AZ", "ITV", "İTV Canlı (Resmi)", "Ümumi", "https://live.itv.az/"),
-            Channel("az-1", "AZ", "CANLITV", "Xəzər TV (CanlıTV)", "Ümumi", "https://canlitv.com/xezer-tv"),
-            Channel("az-2", "AZ", "CANLITV", "AzTV (CanlıTV)", "Ümumi", "https://canlitv.com/az-tv"),
-            Channel("az-3", "AZ", "CANLITV", "İctimai TV (CanlıTV)", "Ümumi", "https://canlitv.com/ictimai-tv"),
-            Channel("az-4", "AZ", "CANLITV", "ATV Azad (CanlıTV)", "Ümumi", "https://canlitv.com/azad-tv"),
-            Channel("az-5", "AZ", "CANLITV", "Space TV (CanlıTV)", "Ümumi", "https://canlitv.com/space-tv"),
-            Channel("az-6", "AZ", "CANLITV", "ARB (CanlıTV)", "Ümumi", "https://canlitv.com/arb-tv"),
-            Channel("az-7", "AZ", "CANLITV", "ARB 24 (CanlıTV)", "Xəbər", "https://canlitv.com/arb-24-tv"),
-            Channel("az-8", "AZ", "CANLITV", "CBC Sport (CanlıTV)", "İdman", "https://canlitv.com/cbc-sport-izle"),
-            Channel("az-9", "AZ", "CANLITV", "İdman TV (CanlıTV)", "İdman", "https://canlitv.com/idman-tv"),
-            Channel("az-10", "AZ", "CANLITV", "Dünya TV (CanlıTV)", "Ümumi", "https://canlitv.com/dunyatv-az"),
-            Channel("az-11", "AZ", "CANLITV", "ARB Günəş (CanlıTV)", "Uşaq", "https://canlitv.com/arb-gunes-tv"),
-
-            // OPERATIVMM.AZ & TVSTREAM.AZ
-            Channel("opr-1", "AZ", "OPERATIV", "AzTV (OperativMM)", "Ümumi", "https://operativmm.az/az/canli-tv", "AZTV"),
-            Channel("opr-2", "AZ", "OPERATIV", "İctimai TV (OperativMM)", "Ümumi", "https://operativmm.az/az/canli-tv", "İctimai TV"),
-            Channel("opr-3", "AZ", "OPERATIV", "ATV (OperativMM)", "Ümumi", "https://operativmm.az/az/canli-tv", "ATV"),
-            Channel("opr-4", "AZ", "OPERATIV", "Xəzər TV (OperativMM)", "Ümumi", "https://operativmm.az/az/canli-tv", "Xəzər TV"),
-            Channel("opr-5", "AZ", "OPERATIV", "Space TV (OperativMM)", "Ümumi", "https://operativmm.az/az/canli-tv", "Space TV"),
-            Channel("opr-6", "AZ", "OPERATIV", "ARB (OperativMM)", "Ümumi", "https://operativmm.az/az/canli-tv", "ARB"),
-            Channel("opr-7", "AZ", "OPERATIV", "Baku TV (OperativMM)", "Xəbər", "https://operativmm.az/az/canli-tv", "Baku TV"),
-            Channel("opr-8", "AZ", "OPERATIV", "Real TV (OperativMM)", "Xəbər", "https://operativmm.az/az/canli-tv", "Real TV"),
-            Channel("opr-9", "AZ", "OPERATIV", "ARB 24 (OperativMM)", "Xəbər", "https://operativmm.az/az/canli-tv", "ARB 24"),
-            Channel("opr-10", "AZ", "OPERATIV", "İdman TV (OperativMM)", "İdman", "https://operativmm.az/az/canli-tv", "İdman TV"),
-            Channel("opr-11", "AZ", "OPERATIV", "CBC Sport (OperativMM)", "İdman", "https://operativmm.az/az/canli-tv", "CBC Sport"),
-            Channel("tvs-1", "AZ", "TVSTREAM", "Xəzər TV (TVStream)", "Ümumi", "https://tvstream.az/#ana-sehife", "XƏZƏR TV"),
-            Channel("tvs-2", "AZ", "TVSTREAM", "AzTV HD (TVStream)", "Ümumi", "https://tvstream.az/#ana-sehife", "AZTV HD"),
-            Channel("tvs-3", "AZ", "TVSTREAM", "İctimai TV (TVStream)", "Ümumi", "https://tvstream.az/#ana-sehife", "ICTIMAI TV"),
-
-            // TÜRKİYƏ & İDMAN (CANLITV.COM)
-            Channel("tr-tvf", "TR", "TVFREKANSLAR", "TV Frekanslar (Canlı)", "Ümumi", "https://amp.tvfrekanslar.com/cntr"),
-            Channel("tr-t24", "TR", "TARAFTARIUM", "Taraftarium24 (İdman)", "İdman", "https://taraftarium24turk-izle.net/"),
-            Channel("tr-1", "TR", "CANLITV", "TRT 1 (CanlıTV)", "Ümumi", "https://canlitv.com/trt1-izle"),
-            Channel("tr-2", "TR", "CANLITV", "ATV (CanlıTV)", "Ümumi", "https://canlitv.com/atv-canli"),
-            Channel("tr-3", "TR", "CANLITV", "Kanal D (CanlıTV)", "Ümumi", "https://canlitv.com/kanal-d-canli-yayin"),
-            Channel("tr-4", "TR", "CANLITV", "Show TV (CanlıTV)", "Ümumi", "https://canlitv.com/show-tv-izle-2"),
-            Channel("tr-5", "TR", "CANLITV", "Star TV (CanlıTV)", "Ümumi", "https://canlitv.com/star-tv-canli"),
-            Channel("tr-6", "TR", "CANLITV", "TV8 (CanlıTV)", "Ümumi", "https://canlitv.com/tv8-izle-4"),
-            Channel("tr-7", "TR", "CANLITV", "Now TV (CanlıTV)", "Ümumi", "https://canlitv.com/now-tv-canli-yayin"),
-            Channel("tr-8", "TR", "CANLITV", "Kanal 7 (CanlıTV)", "Ümumi", "https://canlitv.com/kanal7"),
-            Channel("tr-9", "TR", "CANLITV", "Beyaz TV (CanlıTV)", "Ümumi", "https://canlitv.com/beyaz-tv"),
-            Channel("tr-10", "TR", "CANLITV", "TRT Haber (CanlıTV)", "Xəbər", "https://canlitv.com/trt-haber-izle"),
-            Channel("tr-11", "TR", "CANLITV", "CNN Türk (CanlıTV)", "Xəbər", "https://canlitv.com/cnn-turk-izle-1"),
-            Channel("tr-12", "TR", "CANLITV", "Habertürk (CanlıTV)", "Xəbər", "https://canlitv.com/haberturk"),
-            Channel("tr-13", "TR", "CANLITV", "NTV (CanlıTV)", "Xəbər", "https://canlitv.com/ntv-canli-izle"),
-            Channel("tr-14", "TR", "CANLITV", "Haber Global (CanlıTV)", "Xəbər", "https://canlitv.com/haber-global"),
-            Channel("tr-15", "TR", "CANLITV", "Sözcü TV (CanlıTV)", "Xəbər", "https://canlitv.com/sozcu-tv-izle"),
-            Channel("tr-16", "TR", "CANLITV", "TRT Spor (CanlıTV)", "İdman", "https://canlitv.com/trt-spor-izle"),
-            Channel("tr-17", "TR", "CANLITV", "TRT Spor Yıldız (CanlıTV)", "İdman", "https://canlitv.com/trt-spor-2"),
-            Channel("tr-18", "TR", "CANLITV", "A Spor (CanlıTV)", "İdman", "https://canlitv.com/aspor-canli-izle"),
-            Channel("tr-19", "TR", "CANLITV", "TRT Belgesel (CanlıTV)", "Belgesel", "https://canlitv.com/trt-belgesel")
+    @OptIn(UnstableApi::class)
+    @SuppressLint("SetJavaScriptEnabled")
+    @Suppress("UNCHECKED_CAST")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
         )
-    )
+        hideSystemBars()
 
-    fun fetchM3UChannels(m3uUrl: String, countryTag: String): List<Channel> {
-        return try {
-            val text = URL(m3uUrl).readText()
-            val lines = text.lines()
-            val list = mutableListOf<Channel>()
-            var currentName: String? = null
-            for (raw in lines) {
-                val line = raw.trim()
-                if (line.startsWith("#EXTINF:")) {
-                    val idx = line.lastIndexOf(',')
-                    currentName = if (idx != -1) line.substring(idx + 1).trim() else "Kanal"
-                } else if (line.startsWith("http") && currentName != null) {
-                    list.add(
-                        Channel(
-                            id = "m3u-$countryTag-${list.size + 1}",
-                            country = countryTag,
-                            source = "M3U8",
-                            name = currentName,
-                            category = "Canlı",
-                            url = line
-                        )
-                    )
-                    currentName = null
+        channelList = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
+        currentIndex = intent.getIntExtra("index", 0)
+
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            keepScreenOn = true
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+
+        playerView = PlayerView(this).apply {
+            useController = false
+            keepScreenOn = true
+            isFocusable = false
+            setKeepContentOnPlayerReset(true)
+            setShutterBackgroundColor(Color.TRANSPARENT)
+        }
+        root.addView(playerView, FrameLayout.LayoutParams(-1, -1))
+
+        webPlayer = WebView(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.BLACK)
+            isFocusable = false
+            isFocusableInTouchMode = false
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.setSupportMultipleWindows(false)
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.userAgentString =
+                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    val u = request?.url?.toString()?.lowercase() ?: return true
+                    if (u.startsWith("intent:") || u.startsWith("market:") ||
+                        u.contains("doubleclick") || u.contains("googleads") || u.contains("popads")
+                    ) return true
+                    return false
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    val kw = channelList.getOrNull(currentIndex)?.matchKeyword ?: ""
+                    view?.evaluateJavascript(buildJs(kw), null)
                 }
             }
-            list
-        } catch (_: Exception) {
-            emptyList()
+
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                    customViewCallback?.onCustomViewHidden()
+                    customViewCallback = callback
+                    customVideoContainer.removeAllViews()
+                    if (view != null) {
+                        view.isFocusable = false
+                        customVideoContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
+                        customVideoContainer.visibility = View.VISIBLE
+                        customVideoContainer.bringToFront()
+                    }
+                    if (overlayDrawer.visibility == View.VISIBLE) overlayDrawer.bringToFront()
+                    osdBar.bringToFront()
+                }
+
+                override fun onHideCustomView() {
+                    customVideoContainer.removeAllViews()
+                    customVideoContainer.visibility = View.GONE
+                    customViewCallback?.onCustomViewHidden()
+                    customViewCallback = null
+                }
+            }
+        }
+        root.addView(webPlayer, FrameLayout.LayoutParams(-1, -1))
+
+        customVideoContainer = FrameLayout(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.BLACK)
+            isFocusable = false
+        }
+        root.addView(customVideoContainer, FrameLayout.LayoutParams(-1, -1))
+
+        loadingSpinner = ProgressBar(this).apply {
+            visibility = View.GONE
+        }
+        root.addView(loadingSpinner, FrameLayout.LayoutParams(120, 120, Gravity.CENTER))
+
+        overlayDrawer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#E60B111D"))
+            setPadding(24, 28, 24, 28)
+            visibility = View.GONE
+        }
+        val drawerTitle = TextView(this).apply {
+            text = "KANALLAR (▲/▼ seç, OK aç)"
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 15f
+            setPadding(12, 0, 12, 16)
+        }
+        overlayRecycler = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@PlayerActivity)
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
+        overlayDrawer.addView(drawerTitle)
+        overlayDrawer.addView(overlayRecycler, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(overlayDrawer, FrameLayout.LayoutParams(520, -1, Gravity.START))
+
+        digitOsd = TextView(this).apply {
+            setBackgroundColor(Color.parseColor("#DD0B111D"))
+            setTextColor(Color.parseColor("#38BDF8"))
+            textSize = 28f
+            setPadding(36, 18, 36, 18)
+            visibility = View.GONE
+        }
+        root.addView(
+            digitOsd,
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+                setMargins(0, 36, 48, 0)
+            }
+        )
+
+        osdBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#CC141B22"))
+            setPadding(36, 22, 36, 22)
+        }
+
+        osdTitle = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        }
+
+        val btnList = Button(this).apply {
+            text = "☰ Kanallar (OK)"
+            isFocusable = false
+            setOnClickListener { toggleOverlayDrawer(true) }
+        }
+        val btnPrev = Button(this).apply {
+            text = "▲ CH-"
+            isFocusable = false
+            setOnClickListener { switchChannel(-1) }
+        }
+        val btnNext = Button(this).apply {
+            text = "▼ CH+"
+            isFocusable = false
+            setOnClickListener { switchChannel(1) }
+        }
+        val btnBack = Button(this).apply {
+            text = "Geri"
+            isFocusable = false
+            setOnClickListener { finish() }
+        }
+
+        osdBar.addView(osdTitle)
+        osdBar.addView(btnList)
+        osdBar.addView(btnPrev)
+        osdBar.addView(btnNext)
+        osdBar.addView(btnBack)
+
+        root.addView(osdBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        setContentView(root)
+        root.requestFocus()
+        bindOverlayList()
+
+        if (channelList.isNotEmpty()) {
+            loadCurrentChannel()
         }
     }
 
-    fun fetchRemoteChannels(jsonUrl: String): List<Channel>? {
-        return try {
-            val text = URL(jsonUrl).readText()
-            val arr = JSONArray(text)
-            val result = mutableListOf<Channel>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                result.add(
-                    Channel(
-                        id = obj.optString("id", "rem-$i"),
-                        country = obj.optString("country", "AZ"),
-                        source = obj.optString("source", "REMOTE"),
-                        name = obj.optString("name", "Kanal ${i + 1}"),
-                        category = obj.optString("category", "Ümumi"),
-                        url = obj.getString("url"),
-                        matchKeyword = obj.optString("matchKeyword", "")
-                    )
-                )
-            }
-            if (result.isNotEmpty()) result else null
-        } catch (_: Exception) {
-            null
+    private fun buildJs(keyword: String): String {
+        val kw = keyword.replace("'", "\\'").lowercase()
+        return """
+            (function() {
+                if (window.__k) return; window.__k = 1;
+                var kw = '$kw';
+                var adSec = 0;
+                var fsClicked = false;
+
+                function tap(el) {
+                    if (!el) return;
+                    try { el.scrollIntoView({block:'center'}); } catch(e){}
+                    ['pointerdown','mousedown','mouseup','click'].forEach(function(m) {
+                        try { el.dispatchEvent(new MouseEvent(m, {bubbles:true, cancelable:true, view:window})); } catch(e){}
+                    });
+                    try { el.click(); } catch(e){}
+                }
+
+                function clickChannelKeyword() {
+                    if (!kw) return;
+                    var els = document.querySelectorAll('a, button, div, li, span, h3, h4, p');
+                    for (var i = 0; i < els.length; i++) {
+                        var t = (els[i].innerText || '').trim().toLowerCase();
+                        if (t === kw || (t.includes(kw) && t.length < 32)) {
+                            tap(els[i]);
+                            break;
+                        }
+                    }
+                }
+                setTimeout(clickChannelKeyword, 500);
+                setTimeout(clickChannelKeyword, 2000);
+
+                setInterval(function() {
+                    // 1. Başlat / İzle / Play butonlarına otomatik bas
+                    document.querySelectorAll('.vjs-big-play-button, .jw-icon-playback, [aria-label*="Play" i], [aria-label*="İzle" i], [class*="play-btn"]').forEach(function(p) {
+                        if (p.offsetParent !== null) tap(p);
+                    });
+                    document.querySelectorAll('button, a').forEach(function(b) {
+                        var bt = (b.innerText || '').trim().toLowerCase();
+                        if ((bt === 'izle' || bt === '▶ izle' || bt === 'başlat' || bt === 'oynat' || bt === 'play') && b.offsetParent !== null) {
+                            tap(b);
+                        }
+                    });
+
+                    // 2. 15 sn reklamdan sonra Skip / Reklamı Geç butonuna bas
+                    var skipBtn = null;
+                    document.querySelectorAll('button, a, div, span').forEach(function(el) {
+                        var z = ((el.innerText || '') + ' ' + (el.className || '')).toLowerCase();
+                        if ((z.includes('skip') || z.includes('reklamı geç') || z.includes('reklami gec') || z.includes('reklamı atla')) && el.offsetParent !== null && z.length < 50) {
+                            skipBtn = el;
+                        }
+                    });
+                    if (skipBtn) {
+                        adSec++;
+                        if (adSec >= 15 || (skipBtn.innerText || '').toLowerCase().includes('skip') || (skipBtn.innerText || '').toLowerCase().includes('geç')) {
+                            tap(skipBtn);
+                            adSec = 0;
+                        }
+                    }
+
+                    // 3. Sayfadaki [ ] Tam Ekran butonuna bas ve videoyu 100vw x 100vh yap
+                    if (!fsClicked) {
+                        var fsBtn = document.querySelector('.vjs-fullscreen-control, .jw-icon-fullscreen, [aria-label*="Fullscreen" i], [title*="Tam Ekran" i], [class*="fullscreen"]');
+                        if (fsBtn && fsBtn.offsetParent !== null) {
+                            tap(fsBtn);
+                            fsClicked = true;
+                        }
+                    }
+                    var v = document.querySelector('video');
+                    var f = document.querySelector('iframe[src*="m3u8"], iframe[src*="embed"], iframe[src*="player"], iframe');
+                    var target = v || f;
+                    if (target) {
+                        target.style.setProperty('position', 'fixed', 'important');
+                        target.style.setProperty('top', '0', 'important');
+                        target.style.setProperty('left', '0', 'important');
+                        target.style.setProperty('width', '100vw', 'important');
+                        target.style.setProperty('height', '100vh', 'important');
+                        target.style.setProperty('z-index', '999999', 'important');
+                        target.style.setProperty('background', '#000', 'important');
+                        if (v && v.paused) { v.play().catch(function(){}); }
+                    }
+                }, 1000);
+            })();
+        """.trimIndent()
+    }
+
+    private fun createRowBg(isCurrent: Boolean): StateListDrawable {
+        val focused = GradientDrawable().apply {
+            setColor(Color.parseColor("#1E3A5F"))
+            setStroke(4, Color.parseColor("#38BDF8"))
+            cornerRadius = 8f
+        }
+        val normal = GradientDrawable().apply {
+            setColor(if (isCurrent) Color.parseColor("#1B2D3E") else Color.TRANSPARENT)
+            cornerRadius = 8f
+        }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), focused)
+            addState(intArrayOf(), normal)
         }
     }
-}
+
+    private fun bindOverlayList() {
+        overlayRecycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                val tv = TextView(parent.context).apply {
+                    layoutParams = RecyclerView.LayoutParams(-1, -2)
+                    setPadding(24, 20, 24, 20)
+                    textSize = 15f
+                    setTextColor(Color.WHITE)
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    isClickable = true
+                }
+                return object : RecyclerView.ViewHolder(tv) {}
+            }
+
+            override fun getItemCount() = channelList.size
+
+            override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+                val ch = channelList[position]
+                val tv = holder.itemView as TextView
+                tv.text = String.format("%03d  %s | %s", position + 1, ch.country, ch.name)
+                tv.background = createRowBg(position == currentIndex)
+                tv.setOnClickListener {
+                    currentIndex = position
+                    retryCount = 0
+                    toggleOverlayDrawer(false)
+                    loadCurrentChannel()
+                }
+            }
+        }
+    }
+
+    private fun toggleOverlayDrawer(show: Boolean) {
+        if (show) {
+            overlayDrawer.visibility = View.VISIBLE
+            overlayDrawer.bringToFront()
+            overlayRecycler.adapter?.notifyDataSetChanged()
+            overlayRecycler.scrollToPosition(currentIndex)
+            overlayRecycler.post {
+                overlayRecycler.findViewHolderForAdapterPosition(currentIndex)?.itemView?.requestFocus()
+                    ?: overlayRecycler.requestFocus()
+            }
+        } else {
+            overlayDrawer.visibility = View.GONE
+        }
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).let { controller ->
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    private fun showOsd() {
+        osdBar.visibility = View.VISIBLE
+        osdBar.bringToFront()
+        handler.removeCallbacksAndMessages("osd")
+        handler.postAtTime({ osdBar.visibility = View.GONE }, "osd", SystemClock.uptimeMillis() + 4500)
+    }
+
+    private fun switchChannel(delta: Int) {
+        if (channelList.isEmpty()) return
+        retryCount = 0
+        currentIndex = (currentIndex + delta + channelList.size) % channelList.size
+        loadCurrentChannel()
+    }
+
+    private fun handleRemoteDigit(digit: Int) {
+        digitBuffer += digit.toString()
+        if (digitBuffer.length > 3) digitBuffer = digit.toString()
+        digitOsd.text = digitBuffer.padStart(3, '0')
+        digitOsd.visibility = View.VISIBLE
+        digitOsd.bringToFront()
+
+        handler.removeCallbacksAndMessages("digit")
+        handler.postAtTime({
+            digitOsd.visibility = View.GONE
+            val num = digitBuffer.toIntOrNull() ?: 0
+            digitBuffer = ""
+            if (num in 1..channelList.size) {
+                retryCount = 0
+                currentIndex = num - 1
+                loadCurrentChannel()
+            } else {
+                Toast.makeText(this, "$num numaralı kanal yok", Toast.LENGTH_SHORT).show()
+            }
+        }, "digit", SystemClock.uptimeMillis() + 1200)
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun initializePlayer() {
+        if (player != null) return
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15000, 60000, 1500, 3000)
+            .build()
+        player = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .build()
+            .apply {
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        loadingSpinner.visibility =
+                            if (playbackState == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        loadingSpinner.visibility = View.GONE
+                        if (retryCount < 2) {
+                            retryCount++
+                            handler.postDelayed({ loadCurrentChannel() }, 1500)
+                        } else {
+                            Toast.makeText(this@PlayerActivity, "Yayın açılamadı", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                })
+            }
+        playerView.player = player
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun loadCurrentChannel() {
+        if (channelList.isEmpty()) return
+        currentIndex = currentIndex.coerceIn(0, channelList.size - 1)
+        val ch = channelList[currentI
