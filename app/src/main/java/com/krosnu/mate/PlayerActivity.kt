@@ -23,8 +23,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.ui.PlayerView
@@ -48,11 +51,16 @@ class PlayerActivity : Activity() {
     private var channelList: ArrayList<Channel> = arrayListOf()
     private var currentIndex: Int = 0
     private var digitBuffer: String = ""
+    private var retryCount: Int = 0
 
+    @OptIn(UnstableApi::class)
     @Suppress("UNCHECKED_CAST")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+        )
         hideSystemBars()
 
         channelList = (intent.getSerializableExtra("channels") as? ArrayList<Channel>) ?: arrayListOf()
@@ -60,10 +68,14 @@ class PlayerActivity : Activity() {
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
+            keepScreenOn = true
         }
 
         playerView = PlayerView(this).apply {
             useController = false
+            keepScreenOn = true
+            setKeepContentOnPlayerReset(true)
+            setShutterBackgroundColor(Color.TRANSPARENT)
         }
         root.addView(playerView, FrameLayout.LayoutParams(-1, -1))
 
@@ -201,6 +213,7 @@ class PlayerActivity : Activity() {
                 tv.background = createRowBg(position == currentIndex)
                 tv.setOnClickListener {
                     currentIndex = position
+                    retryCount = 0
                     toggleOverlayDrawer(false)
                     loadCurrentChannel()
                 }
@@ -239,6 +252,7 @@ class PlayerActivity : Activity() {
 
     private fun switchChannel(delta: Int) {
         if (channelList.isEmpty()) return
+        retryCount = 0
         currentIndex = (currentIndex + delta + channelList.size) % channelList.size
         loadCurrentChannel()
     }
@@ -255,6 +269,7 @@ class PlayerActivity : Activity() {
             val num = digitBuffer.toIntOrNull() ?: 0
             digitBuffer = ""
             if (num in 1..channelList.size) {
+                retryCount = 0
                 currentIndex = num - 1
                 loadCurrentChannel()
             } else {
@@ -268,12 +283,10 @@ class PlayerActivity : Activity() {
         osdTitle.text = String.format("%03d  %s | %s", currentIndex + 1, ch.country, ch.name)
         showOsd()
         loadingSpinner.visibility = View.VISIBLE
-        player?.stop()
 
         sniffer?.sniffStream(
             channel = ch,
             onFound = { streamUrl, referer ->
-                loadingSpinner.visibility = View.GONE
                 playStream(streamUrl, referer)
             },
             onFailed = { reason ->
@@ -285,20 +298,56 @@ class PlayerActivity : Activity() {
 
     @OptIn(UnstableApi::class)
     private fun playStream(streamUrl: String, referer: String) {
-        player?.release()
         val headers = mapOf(
             "Referer" to referer,
             "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
         )
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
 
-        val exo = ExoPlayer.Builder(this).build()
-        player = exo
-        playerView.player = exo
+        val exo = player ?: run {
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(15000, 60000, 1500, 3000)
+                .build()
+            ExoPlayer.Builder(this)
+                .setLoadControl(loadControl)
+                .build()
+                .also { created ->
+                    player = created
+                    playerView.player = created
+                    created.addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_READY) {
+                                retryCount = 0
+                                loadingSpinner.visibility = View.GONE
+                            } else if (state == Player.STATE_BUFFERING) {
+                                loadingSpinner.visibility = View.VISIBLE
+                            } else if (state == Player.STATE_ENDED) {
+                                loadCurrentChannel()
+                            }
+                        }
+
+                        override fun onPlayerError(error: PlaybackException) {
+                            if (retryCount < 3) {
+                                retryCount++
+                                Toast.makeText(this@PlayerActivity, "Yayın yenileniyor ($retryCount/3)...", Toast.LENGTH_SHORT).show()
+                                handler.postDelayed({ loadCurrentChannel() }, 1500)
+                            } else {
+                                loadingSpinner.visibility = View.GONE
+                                Toast.makeText(this@PlayerActivity, "Yayın koptu — ▲/▼ ile yedek kaynağa geçin", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    })
+                }
+        }
 
         val mediaItem = MediaItem.fromUri(streamUrl)
-        val hlsSource = HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
+        val hlsSource = HlsMediaSource.Factory(dataSourceFactory)
+            .setAllowChunklessPreparation(true)
+            .createMediaSource(mediaItem)
         exo.setMediaSource(hlsSource)
         exo.prepare()
         exo.playWhenReady = true
