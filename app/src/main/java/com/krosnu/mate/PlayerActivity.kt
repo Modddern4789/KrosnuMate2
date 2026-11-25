@@ -14,6 +14,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -101,6 +102,8 @@ class PlayerActivity : Activity() {
             setBackgroundColor(Color.BLACK)
             isFocusable = false
             isFocusableInTouchMode = false
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -140,6 +143,7 @@ class PlayerActivity : Activity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     loadingSpinner.visibility = View.GONE
+                    CookieManager.getInstance().flush()
                     val kw = channelList.getOrNull(currentIndex)?.matchKeyword ?: ""
                     val js = buildJs(kw)
                     view?.evaluateJavascript(js, null)
@@ -256,13 +260,7 @@ class PlayerActivity : Activity() {
         bindOverlayList()
         if (channelList.isNotEmpty()) loadCurrentChannel()
     }
-      private fun filterMembershipChannels(raw: List<Channel>): ArrayList<Channel> {
-        val blocked = listOf("canlitv.mobile", "canlitvizle", "canlitvmob", "blogcanli")
-        return ArrayList(raw.filter { ch ->
-            val text = "${ch.url} ${ch.source} ${ch.name}".lowercase()
-            blocked.none { text.contains(it) }
-        })
-    }
+        private fun filterMembershipChannels(raw: List<Channel>): ArrayList<Channel> = ArrayList(raw)
 
     private fun buildJs(keyword: String): String {
         val kw = keyword.replace("\\", "\\\\").replace("'", "\\'")
@@ -273,21 +271,34 @@ class PlayerActivity : Activity() {
                 ['keydown','keypress','keyup'].forEach(function(ev){
                     window.addEventListener(ev,function(e){e.stopImmediatePropagation();},true);
                 });
-                var kw = '$kw'.toLowerCase().trim();
-                var tries = 0;
-                var timer = setInterval(function(){
-                    tries++;
-                    if(tries > 60){ clearInterval(timer); return; }
+                function norm(s){
+                    return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/ə/gi,'e').toLowerCase().trim();
+                }
+                var kw = norm('$kw');
+                setInterval(function(){
                     document.querySelectorAll('ins.adsbygoogle,[id^="google_ads"],[id^="aswift"],[class*="adsbygoogle"]').forEach(function(a){a.remove();});
                     if(kw && !window.__krosnuChDone){
-                        var items = document.querySelectorAll('a,button,[role="button"]');
+                        var items = document.querySelectorAll('li,a,button,[role="button"],[onclick],div,span');
+                        var found = null;
                         for(var i=0;i<items.length;i++){
                             var el = items[i];
-                            var t = ((el.innerText||'')+' '+(el.getAttribute('title')||'')).toLowerCase().trim();
-                            if(t.indexOf(kw)!==-1 && t.length > 0 && t.length < 35){
-                                window.__krosnuChDone = true;
-                                el.click();
+                            if(el.children.length > 2) continue;
+                            var t = norm(el.innerText || el.getAttribute('title') || '');
+                            if(t && (t === kw || (t.length < 30 && t.indexOf(kw) !== -1))){
+                                found = el;
                                 break;
+                            }
+                        }
+                        if(found){
+                            if(found.offsetParent === null && !window.__krosnuMenuOpen){
+                                window.__krosnuMenuOpen = true;
+                                var menuBtns = document.querySelectorAll('button,a,div,span');
+                                for(var m=0;m<menuBtns.length;m++){
+                                    if(norm(menuBtns[m].innerText) === 'kanal'){ menuBtns[m].click(); break; }
+                                }
+                            } else {
+                                window.__krosnuChDone = true;
+                                found.click();
                             }
                         }
                     }
@@ -295,12 +306,12 @@ class PlayerActivity : Activity() {
                     for(var j=0;j<btns.length;j++){
                         var b = btns[j];
                         if(b.offsetParent === null) continue;
-                        var txt = (b.innerText||'').toLowerCase().trim();
-                        var meta = ((b.className||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||'')).toLowerCase();
-                        if(txt.length < 25 && /\b(skip|skip ad|reklamı geç|reklami gec|reklamı atla|reklami atla)\b/.test(txt + ' ' + meta)){
+                        var txt = norm(b.innerText);
+                        var meta = norm((b.className||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||''));
+                        if(txt.length < 25 && /\b(skip|skip ad|reklami gec|reklami atla)\b/.test(txt + ' ' + meta)){
                             b.click();
                         }
-                        if(!window.__krosnuPlayDone && (txt==='izle' || txt==='başlat' || txt==='baslat' || txt==='oynat' || meta.indexOf('vjs-big-play')!==-1 || meta.indexOf('plyr__control--overlaid')!==-1)){
+                        if(!window.__krosnuPlayDone && (txt==='izle' || txt==='baslat' || txt==='oynat' || meta.indexOf('vjs-big-play')!==-1 || meta.indexOf('plyr__control--overlaid')!==-1)){
                             window.__krosnuPlayDone = true;
                             b.click();
                         }
@@ -316,10 +327,14 @@ class PlayerActivity : Activity() {
                         if(vid.paused) vid.play().catch(function(){});
                         var p = vid.parentElement;
                         while(p && p !== document.body){
-                            p.style.transform = 'none';
-                            p.style.overflow = 'visible';
+                            p.style.setProperty('position', 'static', 'important');
+                            p.style.setProperty('transform', 'none', 'important');
+                            p.style.setProperty('overflow', 'visible', 'important');
+                            p.style.setProperty('z-index', 'auto', 'important');
                             p = p.parentElement;
                         }
+                        document.documentElement.style.overflow = 'hidden';
+                        document.body.style.overflow = 'hidden';
                         vid.style.cssText = 'position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;background:#000!important;object-fit:contain!important;';
                         return;
                     }
@@ -328,9 +343,9 @@ class PlayerActivity : Activity() {
                     for(var f=0;f<frms.length;f++){
                         var fr = frms[f];
                         var src = (fr.src||'').toLowerCase();
-                        if(/doubleclick|googlesyndication|adservice|yandex|banner|ads/.test(src)) continue;
+                        if(/doubleclick|googlesyndication|adservice|yandex|banner|ads|recaptcha|facebook|twitter/.test(src)) continue;
                         var area = fr.offsetWidth * fr.offsetHeight;
-                        if(fr.offsetWidth > 260 && fr.offsetHeight > 160 && area > bestArea){
+                        if(fr.offsetWidth > 180 && fr.offsetHeight > 100 && area > bestArea){
                             bestArea = area;
                             best = fr;
                         }
@@ -338,15 +353,17 @@ class PlayerActivity : Activity() {
                     if(best){
                         var fp = best.parentElement;
                         while(fp && fp !== document.body){
-                            fp.style.transform = 'none';
-                            fp.style.overflow = 'visible';
+                            fp.style.setProperty('position', 'static', 'important');
+                            fp.style.setProperty('transform', 'none', 'important');
+                            fp.style.setProperty('overflow', 'visible', 'important');
+                            fp.style.setProperty('z-index', 'auto', 'important');
                             fp = fp.parentElement;
                         }
                         document.documentElement.style.overflow = 'hidden';
                         document.body.style.overflow = 'hidden';
                         best.style.cssText = 'position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:2147483646!important;border:0!important;background:#000!important;';
                     }
-                }, 800);
+                }, 1000);
             })();
         """.trimIndent()
     }
@@ -563,6 +580,7 @@ class PlayerActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        CookieManager.getInstance().flush()
         handler.removeCallbacksAndMessages(null)
         webPlayer.destroy()
         player?.release()
