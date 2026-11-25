@@ -276,6 +276,12 @@ class PlayerActivity : Activity() {
                     return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/ə/gi,'e').toLowerCase().trim();
                 }
                 var kw = norm('$kw');
+                function hideSiblings(target){
+                    if(kw && !window.__krosnuChDone) return;
+                    Array.prototype.forEach.call(document.body.children, function(c){
+                        if(c !== target && !c.contains(target)) c.style.setProperty('display', 'none', 'important');
+                    });
+                }
                 setInterval(function(){
                     document.querySelectorAll('ins.adsbygoogle,[id^="google_ads"],[id^="aswift"],[class*="adsbygoogle"],a[href*="bet"],a[href*="multiwin"],[class*="reklam"],[id*="reklam"]').forEach(function(a){a.remove();});
                     if(kw && !window.__krosnuChDone){
@@ -300,7 +306,7 @@ class PlayerActivity : Activity() {
                                 }
                             } else if(r.height > 0) {
                                 window.__krosnuChDone = true;
-                                found.click();
+                                (found.closest('a,button,li,[onclick]') || found).click();
                             }
                         }
                     }
@@ -323,9 +329,6 @@ class PlayerActivity : Activity() {
                             b.click();
                         }
                     }
-                    if(!kw || window.__krosnuChDone){
-                        document.querySelectorAll('header,nav,.header,.top-bar').forEach(function(h){ h.style.display = 'none'; });
-                    }
                     var vids = document.querySelectorAll('video');
                     if(vids.length > 0){
                         var vid = vids[0];
@@ -341,6 +344,7 @@ class PlayerActivity : Activity() {
                         }
                         document.documentElement.style.overflow = 'hidden';
                         document.body.style.overflow = 'hidden';
+                        hideSiblings(vid);
                         vid.style.cssText = 'position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;background:#000!important;object-fit:contain!important;';
                         return;
                     }
@@ -367,6 +371,7 @@ class PlayerActivity : Activity() {
                         }
                         document.documentElement.style.overflow = 'hidden';
                         document.body.style.overflow = 'hidden';
+                        hideSiblings(best);
                         best.style.cssText = 'position:fixed!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;z-index:2147483646!important;border:0!important;background:#000!important;';
                     }
                 }, 1000);
